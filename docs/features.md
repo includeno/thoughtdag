@@ -43,6 +43,15 @@ Guide: [Control context](/guides/context-control) · [Versions, staleness, and r
 
 Guide: [Material nodes and reader](/guides/materials)
 
+## Large-canvas organization
+
+- **Active-node neighborhood**: switch between the full canvas and one- or two-level local projections without changing node positions or context semantics
+- **Independent organization relations**: parent, child and directed jump links live outside LLM context, with multi-parent support and parent-cycle validation
+- **Project taxonomy**: reusable tags and custom node types support create, rename, delete and batch assignment without replacing the system `stepKind`
+- **Combined filters**: text, system/custom type, multiple tags, creation date, relation scope and archive status combine with AND semantics, including filter-only queries
+- **Tree / Card views**: expandable organization hierarchy and date-grouped cards share active-node, selection and query state with Canvas
+- **Durable recovery**: append-only change/undo/redo transactions, monotonic revisions and persisted cursors keep Undo/Redo available after reload
+
 ## Organize and review
 
 - **Merge summary**, **Merge & delete**, **Weave highlights**, structured highlights, and multiple downstream highlight modes.
@@ -75,5 +84,6 @@ Guide: [Session Atlas](/guides/session-atlas)
 - Toolbar access to models, replay, frames, search, language, backup, overflow actions, undo, and redo.
 - Overflow menu for annotation visibility, layout, highlight/material overviews, condense, diagnostics, sharing, exports, appearance, memory, and tutorial.
 - IndexedDB persistence, automatic folder backup, complete JSON import/export, selected/context-chain Markdown, event CSV, and read-only URL sharing.
+- **Local CLI control plane**: off by default and authorized by group/command; supports reading, editing, organizing, import/export and history while destructive permissions remain disabled by default
 
 Guide: [Interface overview](/guides/interface-overview) · [Data, backup, and sharing](/guides/data-sharing)

@@ -17,6 +17,8 @@ dist-ssr
 !.vscode/extensions.json
 *.sw?
 mcp.config.json
+.thoughtdag-cli-session.json
+.playwright-cli/
 CLAUDE.md
 DOGFOOD.md
 PRODUCT_MAP.md

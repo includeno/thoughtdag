@@ -328,6 +328,7 @@ export async function runNodeGeneration(
       // hiccup, tool-only turn) — silent emptiness reads as a hang, so
       // surface it as a retryable failure instead.
       writeFinal(t('node.emptyResponse'), true);
+      get().pushHistory('generation.empty');
       return;
     }
     writeFinal(response);

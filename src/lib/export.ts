@@ -1,21 +1,31 @@
 import { set as idbSet } from 'idb-keyval';
-import { useStore, stripTransient } from '../store';
+import { flushPendingTransaction, useStore, stripTransient } from '../store';
 import { getModelsOnce, reconcileModelId } from './use-models';
 import { useProjects, projectStorageKey, adoptImportedProject } from '../store/projects';
 import { detectFormat, listConversations, type ImportableConversation } from './import-chat';
 import { isParadigmFile } from './paradigm';
 import { getContextPath } from './graph';
+import { findParentCycles } from './knowledge';
+import { parseCanvasEvents, parseTransactionLedger, validateTransactionHistory } from './transaction-import';
 import { countTokens } from '../utils';
 import { confirmDialog, toast } from './ui-store';
-import { inlineVaultedContent, internNodes } from './attachment-vault';
+import { inlineVaultedContent, inlineVaultedTransactions, internNodes, internTransactions } from './attachment-vault';
 import { t, fmt } from '../i18n';
-import type { ThoughtNode, ThoughtEdge } from '../types';
+import type {
+  ThoughtNode,
+  ThoughtEdge,
+  OrganizationRelation,
+  TagDefinition,
+  NodeTypeDefinition,
+  CanvasEvent,
+} from '../types';
 import type { ProjectMeta } from '../store/projects';
+import type { CanvasTransaction, ProjectTaxonomy } from '../store/types';
 
-export const EXPORT_FORMAT_VERSION = 1;
+export const EXPORT_FORMAT_VERSION = 2;
 // Must match the main store's persist `version` — a mismatched envelope
 // silently hydrates to an empty canvas.
-const PERSIST_VERSION = 1;
+const PERSIST_VERSION = 2;
 
 function sanitizeFilename(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '_').trim() || 'canvas';
@@ -45,13 +55,29 @@ export async function exportActiveProjectJson(opts?: { sharedReadonly?: boolean 
   // (they never leave the machine and must never be interrupted)
   const { confirmIfSensitive } = await import('./sensitive-scan');
   if (!await confirmIfSensitive(gateNodes)) return;
+  if (!flushPendingTransaction('project.export')) {
+    toast('info', t('toast.exportBusy'));
+    return;
+  }
   localStorage.setItem('thoughtdag.lastBackupAt', String(Date.now()));
-  const { nodes: rawNodes, edges, events } = useStore.getState();
+  const {
+    nodes: rawNodes,
+    edges,
+    events,
+    organizationRelations,
+    taxonomy,
+    transactions,
+    undoableTransactionIds,
+    redoableTransactionIds,
+    revision,
+  } = useStore.getState();
   // A backup file must be self-contained: pull vaulted payloads back inline
   const nodes = await inlineVaultedContent(rawNodes);
+  const exportedTransactions = opts?.sharedReadonly ? [] : await inlineVaultedTransactions(transactions);
   const { projects, activeId } = useProjects.getState();
   const name = activeProjectName();
   const payload = JSON.stringify({
+    schemaVersion: EXPORT_FORMAT_VERSION,
     version: EXPORT_FORMAT_VERSION,
     name,
     projectId: activeId,
@@ -64,7 +90,15 @@ export async function exportActiveProjectJson(opts?: { sharedReadonly?: boolean 
     ...(opts?.sharedReadonly ? { sharedReadonly: true } : {}),
     nodes: stripTransient(nodes),
     edges,
-    events,
+    ...(opts?.sharedReadonly ? {} : { events }),
+    organizationRelations,
+    taxonomy,
+    ...(opts?.sharedReadonly ? {} : {
+      transactions: exportedTransactions,
+      undoableTransactionIds,
+      redoableTransactionIds,
+      revision,
+    }),
   });
   downloadFile(`${sanitizeFilename(name)}.thoughtdag.json`, payload, 'application/json');
   toast('success', fmt(t('toast.exported'), { name }));
@@ -76,9 +110,13 @@ export async function exportActiveProjectJson(opts?: { sharedReadonly?: boolean 
  * the caller can show a picker.
  */
 export function exportActiveParadigm(): void {
-  const { nodes, edges } = useStore.getState();
+  if (!flushPendingTransaction('paradigm.export')) {
+    toast('info', t('toast.exportBusy'));
+    return;
+  }
+  const { nodes, edges, organizationRelations, taxonomy } = useStore.getState();
   const name = activeProjectName();
-  const payload = JSON.stringify({ kind: 'thoughtdag-paradigm', version: 1, name, nodes: stripTransient(nodes), edges });
+  const payload = JSON.stringify({ kind: 'thoughtdag-paradigm', version: 2, name, nodes: stripTransient(nodes), edges, organizationRelations, taxonomy });
   downloadFile(`${sanitizeFilename(name)}.paradigm.json`, payload, 'application/json');
   toast('success', fmt(t('toast.exported'), { name }));
 }
@@ -102,7 +140,16 @@ export async function parseImportFile(file: File): Promise<
   if (isParadigmFile(parsed)) {
     const id = crypto.randomUUID();
     const reconciled = await internNodes(await reconcileImportedModels(parsed.nodes));
-    await idbSet(projectStorageKey(id), JSON.stringify({ state: { nodes: reconciled, edges: parsed.edges }, version: PERSIST_VERSION }));
+    const extended = parsed as typeof parsed & { organizationRelations?: unknown; taxonomy?: unknown };
+    await idbSet(projectStorageKey(id), JSON.stringify({
+      state: {
+        nodes: reconciled,
+        edges: parsed.edges,
+        organizationRelations: Array.isArray(extended.organizationRelations) ? extended.organizationRelations : [],
+        taxonomy: extended.taxonomy ?? { tags: [], nodeTypes: [] },
+      },
+      version: PERSIST_VERSION,
+    }));
     await adoptImportedProject(id, parsed.name || 'Paradigm', 'paradigm');
     toast('success', fmt(t('toast.imported'), { name: parsed.name, n: parsed.nodes.length }));
     return { kind: 'own', ok: true };
@@ -135,6 +182,163 @@ function looksLikeCanvasNodes(nodes: unknown[]): boolean {
       && !!node.position && typeof node.position.x === 'number' && typeof node.position.y === 'number'
       && !!node.data && typeof node.data === 'object';
   });
+}
+
+function normalizeImportedNodes(nodes: ThoughtNode[]): ThoughtNode[] {
+  return nodes.map((node) => ({
+    ...node,
+    data: {
+      ...node.data,
+      tagIds: Array.isArray(node.data.tagIds)
+        ? [...new Set(node.data.tagIds.filter((id): id is string => typeof id === 'string'))]
+        : [],
+    },
+  }));
+}
+
+function looksLikeCanvasEdges(edges: unknown[]): edges is ThoughtEdge[] {
+  return edges.every((value) => {
+    const edge = value as Partial<ThoughtEdge> | null;
+    return !!edge
+      && typeof edge.id === 'string'
+      && typeof edge.source === 'string'
+      && typeof edge.target === 'string'
+      // Organization edges are render-only adapters. Accepting one here
+      // would let it leak into prompting, layout and staleness traversal.
+      && edge.data?.isOrganization !== true;
+  });
+}
+
+function parseTaxonomy(value: unknown): ProjectTaxonomy | null {
+  if (value === undefined) return { tags: [], nodeTypes: [] };
+  if (!value || typeof value !== 'object') return null;
+  const taxonomy = value as { tags?: unknown; nodeTypes?: unknown };
+  if (!Array.isArray(taxonomy.tags) || !Array.isArray(taxonomy.nodeTypes)) return null;
+  const validDefinition = (definition: unknown): definition is TagDefinition | NodeTypeDefinition => {
+    const item = definition as Partial<TagDefinition> | null;
+    return !!item && typeof item.id === 'string' && !!item.id.trim()
+      && typeof item.name === 'string' && !!item.name.trim()
+      && typeof item.color === 'string' && !!item.color.trim()
+      && typeof item.createdAt === 'string' && !!item.createdAt.trim();
+  };
+  if (!taxonomy.tags.every(validDefinition) || !taxonomy.nodeTypes.every(validDefinition)) return null;
+  const unique = (items: readonly (TagDefinition | NodeTypeDefinition)[]) => {
+    const ids = new Set<string>();
+    const names = new Set<string>();
+    for (const item of items) {
+      const name = item.name.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+      if (!name || ids.has(item.id) || names.has(name)) return false;
+      ids.add(item.id);
+      names.add(name);
+    }
+    return true;
+  };
+  if (!unique(taxonomy.tags) || !unique(taxonomy.nodeTypes)) return null;
+  return { tags: taxonomy.tags, nodeTypes: taxonomy.nodeTypes } as ProjectTaxonomy;
+}
+
+function parseOrganizationRelations(value: unknown, nodeIds: ReadonlySet<string>): OrganizationRelation[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  const relationIds = new Set<string>();
+  const pairs = new Set<string>();
+  const relations: OrganizationRelation[] = [];
+  for (const entry of value) {
+    const relation = entry as Partial<OrganizationRelation> | null;
+    if (!relation || typeof relation.id !== 'string'
+      || typeof relation.sourceId !== 'string' || typeof relation.targetId !== 'string'
+      || (relation.kind !== 'parent' && relation.kind !== 'jump')
+      || typeof relation.createdAt !== 'string'
+      || relation.sourceId === relation.targetId
+      || !nodeIds.has(relation.sourceId) || !nodeIds.has(relation.targetId)
+      || relationIds.has(relation.id)) return null;
+    const pair = `${relation.kind}\u0000${relation.sourceId}\u0000${relation.targetId}`;
+    if (pairs.has(pair)) return null;
+    relationIds.add(relation.id);
+    pairs.add(pair);
+    relations.push(relation as OrganizationRelation);
+  }
+  return findParentCycles(relations).length === 0 ? relations : null;
+}
+
+function validateTransactionNode(value: unknown, name: string): ThoughtNode {
+  const node = value as Partial<ThoughtNode> | null;
+  if (!node || typeof node.id !== 'string' || !node.id.trim()
+    || !node.position || typeof node.position.x !== 'number' || !Number.isFinite(node.position.x)
+    || typeof node.position.y !== 'number' || !Number.isFinite(node.position.y)
+    || !node.data || typeof node.data !== 'object') {
+    throw new Error(`${name} is not a valid canvas node`);
+  }
+  if (node.data.tagIds !== undefined
+    && (!Array.isArray(node.data.tagIds)
+      || node.data.tagIds.some((id) => typeof id !== 'string' || !id.trim()))) {
+    throw new Error(`${name} has invalid tagIds`);
+  }
+  if (node.data.customTypeId !== undefined
+    && (typeof node.data.customTypeId !== 'string' || !node.data.customTypeId.trim())) {
+    throw new Error(`${name} has an invalid customTypeId`);
+  }
+  return node as ThoughtNode;
+}
+
+function validateTransactionEdge(value: unknown, name: string): ThoughtEdge {
+  const edge = value as Partial<ThoughtEdge> | null;
+  if (!edge || typeof edge.id !== 'string' || !edge.id.trim()
+    || typeof edge.source !== 'string' || !edge.source.trim()
+    || typeof edge.target !== 'string' || !edge.target.trim()
+    || edge.source === edge.target
+    || edge.data?.isOrganization === true) {
+    throw new Error(`${name} is not a valid canvas edge`);
+  }
+  return edge as ThoughtEdge;
+}
+
+function validateTransactionOrganizationRelation(value: unknown, name: string): OrganizationRelation {
+  const relation = value as Partial<OrganizationRelation> | null;
+  if (!relation || typeof relation.id !== 'string' || !relation.id.trim()
+    || typeof relation.sourceId !== 'string' || !relation.sourceId.trim()
+    || typeof relation.targetId !== 'string' || !relation.targetId.trim()
+    || relation.sourceId === relation.targetId
+    || (relation.kind !== 'parent' && relation.kind !== 'jump')
+    || typeof relation.createdAt !== 'string' || !relation.createdAt.trim()) {
+    throw new Error(`${name} is not a valid organization relation`);
+  }
+  return relation as OrganizationRelation;
+}
+
+function validateTransactionTaxonomy(value: unknown, name: string): ProjectTaxonomy {
+  if (value === undefined) throw new Error(`${name} is not a valid taxonomy`);
+  const taxonomy = parseTaxonomy(value);
+  if (!taxonomy) throw new Error(`${name} is not a valid taxonomy`);
+  return taxonomy;
+}
+
+async function reconcileImportedStateModels(
+  nodes: ThoughtNode[],
+  transactions: CanvasTransaction[],
+): Promise<{ nodes: ThoughtNode[]; transactions: CanvasTransaction[] }> {
+  const transactionNodes: ThoughtNode[] = [];
+  for (const transaction of transactions) {
+    for (const change of transaction.changes.nodes) {
+      if (change.before) transactionNodes.push(change.before);
+      if (change.after) transactionNodes.push(change.after);
+    }
+  }
+  const reconciled = await reconcileImportedModels([...nodes, ...normalizeImportedNodes(transactionNodes)]);
+  const reconciledNodes = reconciled.slice(0, nodes.length);
+  let cursor = nodes.length;
+  const reconciledTransactions = transactions.map((transaction) => ({
+    ...transaction,
+    changes: {
+      ...transaction.changes,
+      nodes: transaction.changes.nodes.map((change) => ({
+        ...change,
+        ...(change.before ? { before: reconciled[cursor++] } : {}),
+        ...(change.after ? { after: reconciled[cursor++] } : {}),
+      })),
+    },
+  }));
+  return { nodes: reconciledNodes, transactions: reconciledTransactions };
 }
 
 /** Convert selected chat conversations, one new project each. */
@@ -189,7 +393,7 @@ async function reconcileImportedModels(nodes: ThoughtNode[]): Promise<ThoughtNod
 }
 
 export async function importProjectFromFile(file: File, pre?: unknown): Promise<boolean> {
-  let parsed: { name?: string; nodes?: ThoughtNode[]; edges?: ThoughtEdge[]; events?: unknown[]; instantiatedFrom?: ProjectMeta['instantiatedFrom']; sourceSession?: ProjectMeta['sourceSession']; sharedReadonly?: boolean };
+  let parsed: { schemaVersion?: number; version?: number; name?: string; nodes?: ThoughtNode[]; edges?: ThoughtEdge[]; events?: unknown[]; instantiatedFrom?: ProjectMeta['instantiatedFrom']; sourceSession?: ProjectMeta['sourceSession']; sharedReadonly?: boolean };
   try {
     parsed = (pre ?? JSON.parse(await file.text())) as typeof parsed;
   } catch {
@@ -200,7 +404,94 @@ export async function importProjectFromFile(file: File, pre?: unknown): Promise<
     toast('error', t('toast.importFailedMissing'));
     return false;
   }
+  const schemaVersion = parsed.schemaVersion ?? parsed.version ?? 1;
+  if (!Number.isInteger(schemaVersion) || schemaVersion < 1 || schemaVersion > EXPORT_FORMAT_VERSION) {
+    toast('error', t('toast.importFailedVersion'), 9000);
+    return false;
+  }
   if (parsed.nodes.length > 0 && !looksLikeCanvasNodes(parsed.nodes)) {
+    toast('error', t('toast.importFailedShape'), 9000);
+    return false;
+  }
+  if (!looksLikeCanvasEdges(parsed.edges)) {
+    toast('error', t('toast.importFailedShape'), 9000);
+    return false;
+  }
+  if (parsed.sharedReadonly !== undefined && typeof parsed.sharedReadonly !== 'boolean') {
+    toast('error', t('toast.importFailedShape'), 9000);
+    return false;
+  }
+  // Write in the zustand-persist envelope format so rehydration accepts it.
+  const extended = parsed as typeof parsed & {
+    organizationRelations?: unknown;
+    taxonomy?: unknown;
+    transactions?: unknown;
+    undoableTransactionIds?: unknown;
+    redoableTransactionIds?: unknown;
+    revision?: unknown;
+  };
+  const normalizedNodes = normalizeImportedNodes(parsed.nodes);
+  const nodeIds = new Set(normalizedNodes.map((node) => node.id));
+  const edgeIds = new Set(parsed.edges.map((edge) => edge.id));
+  if (nodeIds.size !== normalizedNodes.length || edgeIds.size !== parsed.edges.length) {
+    toast('error', t('toast.importFailedShape'), 9000);
+    return false;
+  }
+  const isV2 = schemaVersion === 2;
+  const organizationRelations = isV2
+    ? parseOrganizationRelations(extended.organizationRelations, nodeIds)
+    : [];
+  const taxonomy = isV2
+    ? parseTaxonomy(extended.taxonomy)
+    : { tags: [], nodeTypes: [] };
+  if (!organizationRelations || !taxonomy) {
+    toast('error', t('toast.importFailedShape'), 9000);
+    return false;
+  }
+  const validTagIds = new Set(taxonomy.tags.map((tag) => tag.id));
+  const validTypeIds = new Set(taxonomy.nodeTypes.map((type) => type.id));
+  if (normalizedNodes.some((node) =>
+    (node.data.tagIds ?? []).some((tagId) => !validTagIds.has(tagId))
+      || (!!node.data.customTypeId && !validTypeIds.has(node.data.customTypeId)))) {
+    toast('error', t('toast.importFailedShape'), 9000);
+    return false;
+  }
+  let ledger = {
+    transactions: [] as CanvasTransaction[],
+    undoableTransactionIds: [] as string[],
+    redoableTransactionIds: [] as string[],
+    revision: 0,
+  };
+  let events: CanvasEvent[] = [];
+  try {
+    if (!parsed.sharedReadonly && isV2) {
+      events = parseCanvasEvents(parsed.events);
+      ledger = parseTransactionLedger(extended, {
+        node: validateTransactionNode,
+        edge: validateTransactionEdge,
+        organizationRelation: validateTransactionOrganizationRelation,
+        taxonomy: validateTransactionTaxonomy,
+      });
+      validateTransactionHistory(ledger.transactions, {
+        nodes: normalizedNodes,
+        edges: parsed.edges,
+        organizationRelations,
+        taxonomy,
+      });
+    } else if (!parsed.sharedReadonly && Array.isArray(parsed.events)) {
+      // v1 migration preserves the legacy event array verbatim. It had no
+      // transaction ledger and may contain operations unknown to v2.
+      events = parsed.events as CanvasEvent[];
+    }
+    if (isV2 && parsed.sharedReadonly) {
+      validateTransactionHistory([], {
+        nodes: normalizedNodes,
+        edges: parsed.edges,
+        organizationRelations,
+        taxonomy,
+      });
+    }
+  } catch {
     toast('error', t('toast.importFailedShape'), 9000);
     return false;
   }
@@ -225,11 +516,25 @@ export async function importProjectFromFile(file: File, pre?: unknown): Promise<
       return true;
     }
   }
+  const sourceTransactions = ledger.transactions;
+  const modelState = await reconcileImportedStateModels(normalizedNodes, sourceTransactions);
+  const reconciled = await internNodes(modelState.nodes);
+  const importedTransactions = await internTransactions(modelState.transactions);
   const id = crypto.randomUUID();
-  const reconciled = await internNodes(await reconcileImportedModels(parsed.nodes));
-  // Write in the zustand-persist envelope format so rehydration accepts it.
   await idbSet(projectStorageKey(id), JSON.stringify({
-    state: { nodes: stripTransient(reconciled), edges: parsed.edges, ...(Array.isArray(parsed.events) ? { events: parsed.events } : {}) },
+    state: {
+      nodes: stripTransient(reconciled),
+      edges: parsed.edges,
+      ...(!parsed.sharedReadonly ? { events } : {}),
+      organizationRelations,
+      taxonomy,
+      ...(!parsed.sharedReadonly ? {
+        transactions: importedTransactions,
+        undoableTransactionIds: ledger.undoableTransactionIds,
+        redoableTransactionIds: ledger.redoableTransactionIds,
+        revision: ledger.revision,
+      } : {}),
+    },
     version: PERSIST_VERSION,
   }));
   const name = parsed.name?.trim() || file.name.replace(/\.thoughtdag\.json$|\.json$/i, '') || 'Imported canvas';

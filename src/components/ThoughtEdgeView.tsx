@@ -24,6 +24,7 @@ export default function ThoughtEdgeView({
   style, markerEnd, markerStart, selected, interactionWidth, data,
 }: EdgeProps<ThoughtEdge>) {
   const deleteEdges = useStore((s) => s.deleteEdges);
+  const deleteOrganizationRelations = useStore((s) => s.deleteOrganizationRelations);
   const setEdgeStructural = useStore((s) => s.setEdgeStructural);
   const nodes = useStore((s) => s.nodes);
   const edges = useStore((s) => s.edges);
@@ -33,13 +34,14 @@ export default function ThoughtEdgeView({
   // = full wiring (files included). Selected, the edge wears a chip that
   // prices and performs the conversion. Explore and watch edges keep their
   // own semantics and don't convert.
+  const isOrganization = !!data?.isOrganization;
   const isRef = !!data?.isCrossLink;
   const depth = data?.contextDepth === 'full' ? 'full' : 'quote';
   const src = nodes.find((n) => n.id === source);
   const srcIsMaterial = !src || ['note', 'file', 'link'].includes(src.data.stepKind ?? '');
-  const convertible = isRef
+  const convertible = !isOrganization && (isRef
     ? !data?.isWatch && !srcIsMaterial
-    : !data?.isBranchFromSelection && !data?.isWatch && !srcIsMaterial;
+    : !data?.isBranchFromSelection && !data?.isWatch && !srcIsMaterial);
   const refTok = useMemo(() => {
     if (!selected || !convertible) return 0;
     if (!src) return 0;
@@ -101,7 +103,7 @@ export default function ThoughtEdgeView({
           </div>
         </EdgeLabelRenderer>
       )}
-      {data?.focusRole === 'path' && (
+      {!isOrganization && data?.focusRole === 'path' && (
         // Context Focus feed line: bright dots gliding INSIDE the solid
         // stroke (narrower than it, so the line never reads as dashed —
         // dashed is taken: references)
@@ -118,6 +120,11 @@ export default function ThoughtEdgeView({
             }}
           >
             <div className="flex items-center gap-1">
+              {isOrganization && (
+                <span className="h-6 px-2 rounded-full bg-card border border-line shadow-md flex items-center text-2xs text-ink-muted whitespace-nowrap">
+                  {t(data?.organizationKind === 'jump' ? 'knowledge.jump' : 'knowledge.parent')}
+                </span>
+              )}
               {convertible && refTok > 0 && (
                 <button
                   onClick={(e) => { e.stopPropagation(); setEdgeStructural(id, isRef); }}
@@ -130,7 +137,11 @@ export default function ThoughtEdgeView({
                 </button>
               )}
               <button
-                onClick={(e) => { e.stopPropagation(); deleteEdges([id]); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (isOrganization && data?.organizationRelationId) deleteOrganizationRelations([data.organizationRelationId]);
+                  else deleteEdges([id]);
+                }}
                 className="w-6 h-6 rounded-full bg-card border border-line shadow-md flex items-center justify-center text-ink-faint hover:text-red-500 hover:border-red-300 transition-colors"
                 title={t('canvas.deleteEdgeTitle')}
               >

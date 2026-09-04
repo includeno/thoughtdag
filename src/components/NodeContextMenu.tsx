@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, ArchiveRestore, BookOpen, Copy, Files, FlaskConical, GitFork, Maximize2, RefreshCw, StickyNote, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, BookOpen, CircleDot, Copy, Files, FlaskConical, GitFork, Maximize2, RefreshCw, StickyNote, Tags, Trash2, UserRoundPlus } from 'lucide-react';
 import { useStore } from '../store';
 import { useUiStore, confirmDialog, toast } from '../lib/ui-store';
 import { recapToNote } from '../lib/recap';
@@ -39,7 +39,7 @@ export default function NodeContextMenu({ x, y, nodeId, onClose }: {
 
   // Keep the menu inside the viewport (it renders at the pointer)
   const MENU_W = 200;
-  const MENU_H = 340;
+  const MENU_H = 500;
   const left = Math.min(x, window.innerWidth - MENU_W - 8);
   const top = Math.min(y, window.innerHeight - MENU_H - 8);
 
@@ -54,6 +54,27 @@ export default function NodeContextMenu({ x, y, nodeId, onClose }: {
         })}>
           <BookOpen size={14} strokeWidth={1.75} className={icon} /> {t('ctx.openPanel')}
         </button>
+      )}
+      {kind !== 'frame' && (
+        <>
+          <button className={item} onClick={run(() => {
+            useStore.getState().setSelectedNodeId(nodeId);
+            useUiStore.getState().setActiveNodeId(nodeId);
+            useUiStore.getState().setLocalDepth(1);
+          })}>
+            <CircleDot size={14} strokeWidth={1.75} className={icon} /> {t('knowledge.focusLocal')}
+          </button>
+          <button className={item} onClick={run(() => { useStore.getState().createOrganizationNode(nodeId, 'parent'); })}>
+            <UserRoundPlus size={14} strokeWidth={1.75} className={`${icon} rotate-180`} /> {t('knowledge.createParent')}
+          </button>
+          <button className={item} onClick={run(() => { useStore.getState().createOrganizationNode(nodeId, 'child'); })}>
+            <UserRoundPlus size={14} strokeWidth={1.75} className={icon} /> {t('knowledge.createChild')}
+          </button>
+          <button className={item} onClick={run(() => useUiStore.getState().setMetadataEditorNodeIds([nodeId]))}>
+            <Tags size={14} strokeWidth={1.75} className={icon} /> {t('metadata.edit')}
+          </button>
+          <div className="h-px bg-line my-1" />
+        </>
       )}
       {hasResponse && (
         <button className={item} onClick={run(() => useUiStore.getState().setResponseViewerNodeId(nodeId))}>

@@ -1,4 +1,5 @@
-import type { ThoughtNode, ThoughtEdge } from '../types';
+import type { ThoughtNode, ThoughtEdge, OrganizationRelation } from '../types';
+import type { ProjectTaxonomy } from '../store/types';
 
 // Read-only viewer: the link IS the canvas. Graph data travels in the URL
 // hash (#view=<deflate+base64url>), so nothing touches a server and the
@@ -31,10 +32,17 @@ async function pipe(bytes: Uint8Array, stream: CompressionStream | Decompression
 export interface ViewerPayload {
   nodes: ThoughtNode[];
   edges: ThoughtEdge[];
+  organizationRelations?: OrganizationRelation[];
+  taxonomy?: ProjectTaxonomy;
 }
 
 /** Serialize a graph into a shareable read-only URL (current origin + path). */
-export async function buildViewerLink(nodes: ThoughtNode[], edges: ThoughtEdge[]): Promise<string> {
+export async function buildViewerLink(
+  nodes: ThoughtNode[],
+  edges: ThoughtEdge[],
+  organizationRelations: OrganizationRelation[] = [],
+  taxonomy: ProjectTaxonomy = { tags: [], nodeTypes: [] },
+): Promise<string> {
   const clean: ViewerPayload = {
     nodes: nodes.map((n) => ({
       ...n,
@@ -57,6 +65,8 @@ export async function buildViewerLink(nodes: ThoughtNode[], edges: ThoughtEdge[]
       },
     })),
     edges: edges.map((e) => (e.selected ? { ...e, selected: false } : e)),
+    organizationRelations,
+    taxonomy,
   };
   const bytes = new TextEncoder().encode(JSON.stringify(clean));
   const packed = await pipe(bytes, new CompressionStream('deflate-raw'));
@@ -79,12 +89,18 @@ export async function bootViewer(): Promise<void> {
   // isViewerMode at creation time, so no early set() can race this boot)
   const { useStore } = await import('../store');
   try {
-    const { nodes, edges } = await decodeViewerHash(window.location.hash);
+    const { nodes, edges, organizationRelations = [], taxonomy = { tags: [], nodeTypes: [] } } = await decodeViewerHash(window.location.hash);
     useStore.setState({
       nodes,
       edges,
-      history: [{ nodes, edges }],
+      organizationRelations,
+      taxonomy,
+      history: [{ nodes, edges, organizationRelations, taxonomy }],
       historyIndex: 0,
+      transactions: [],
+      undoableTransactionIds: [],
+    redoableTransactionIds: [],
+    revision: 0,
       selectedNodeId: null,
       selectedNodeIds: [],
     });
