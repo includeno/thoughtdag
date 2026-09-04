@@ -47,3 +47,5 @@ docs/.vitepress/cache/
 
 # Context-operations benchmark: published (reference gate closed 2026-08-16,
 # report live). In-capture run dirs join as they complete.
+
+.idea
