@@ -6,7 +6,7 @@ import { healLegacyNoteEdges, autoLayout, estimateNodeHeight, nodeHeight } from 
 import { getDescendantIds, walkUpAncestors } from '../../lib/graph';
 import { referenceBlockContent, upstreamFingerprint, buildContext } from '../context-builder';
 import { pruneHighlights } from '../../lib/highlight-match';
-import { toast } from '../../lib/ui-store';
+import { toast, useUiStore } from '../../lib/ui-store';
 import { t, fmt } from '../../i18n';
 import type { StoreState, NodeSlice } from '../types';
 import { condenseGuard } from '../../lib/condense-guard';
@@ -19,8 +19,14 @@ export const createNodeSlice: StateCreator<StoreState, [], [], NodeSlice> = (set
 
   setNodes: (nodes) => set({ nodes }),
   setEdges: (edges) => set({ edges }),
-  setSelectedNodeId: (id) => set({ selectedNodeId: id, selectedNodeIds: id ? [id] : [] }),
-  setSelectedNodeIds: (ids) => set({ selectedNodeIds: ids, selectedNodeId: ids.length === 1 ? ids[0] : null }),
+  setSelectedNodeId: (id) => {
+    set({ selectedNodeId: id, selectedNodeIds: id ? [id] : [] });
+    if (id) useUiStore.getState().setActiveNodeId(id);
+  },
+  setSelectedNodeIds: (ids) => {
+    set({ selectedNodeIds: ids, selectedNodeId: ids.length === 1 ? ids[0] : null });
+    if (ids.length === 1) useUiStore.getState().setActiveNodeId(ids[0]);
+  },
 
   deleteNode: (nodeId: string) => {
     if (condenseGuard()) return;
@@ -32,7 +38,12 @@ export const createNodeSlice: StateCreator<StoreState, [], [], NodeSlice> = (set
     set((state) => ({
       nodes: state.nodes.filter((n) => !removeIds.has(n.id)),
       edges: state.edges.filter((e) => !removeIds.has(e.source) && !removeIds.has(e.target)),
+      organizationRelations: state.organizationRelations.filter((relation) => !removeIds.has(relation.sourceId) && !removeIds.has(relation.targetId)),
     }));
+    if (removeIds.has(useUiStore.getState().activeNodeId ?? '')) {
+      useUiStore.getState().setActiveNodeId(null);
+      useUiStore.getState().setLocalDepth(0);
+    }
     get().pushHistory();
     // deletion IS unsubscription — see canonical.unsubscribeOrphanedSessions
     void import('../../lib/atlas/canonical').then((m) => m.unsubscribeOrphanedSessions());
@@ -457,9 +468,14 @@ export const createNodeSlice: StateCreator<StoreState, [], [], NodeSlice> = (set
     set((state) => ({
       nodes: state.nodes.filter((n) => !removeSet.has(n.id)),
       edges: state.edges.filter((e) => !removeSet.has(e.source) && !removeSet.has(e.target)),
+      organizationRelations: state.organizationRelations.filter((relation) => !removeSet.has(relation.sourceId) && !removeSet.has(relation.targetId)),
       selectedNodeId: null,
       selectedNodeIds: [],
     }));
+    if (removeSet.has(useUiStore.getState().activeNodeId ?? '')) {
+      useUiStore.getState().setActiveNodeId(null);
+      useUiStore.getState().setLocalDepth(0);
+    }
     get().pushHistory();
     // deletion IS unsubscription — see canonical.unsubscribeOrphanedSessions
     void import('../../lib/atlas/canonical').then((m) => m.unsubscribeOrphanedSessions());
@@ -521,7 +537,11 @@ export const createNodeSlice: StateCreator<StoreState, [], [], NodeSlice> = (set
       selected: true,
       data: {
         ...n.data,
-        attachments: (n.data.attachments ?? []).map((a) => ({ ...a, id: attIdMap.get(a.id)! })),
+        attachments: (n.data.attachments ?? []).map((a) => ({
+          ...a,
+          id: attIdMap.get(a.id)!,
+          ...(a.contentInVault ? { vaultId: a.vaultId ?? a.id } : {}),
+        })),
         excludedAttachmentIds: remapAttIds(n.data.excludedAttachmentIds),
         includedAttachmentIds: remapAttIds(n.data.includedAttachmentIds),
         digestOf: n.data.digestOf ? (attIdMap.get(n.data.digestOf) ?? n.data.digestOf) : undefined,
@@ -545,10 +565,21 @@ export const createNodeSlice: StateCreator<StoreState, [], [], NodeSlice> = (set
         data: e.data ? { ...e.data } : e.data,
       }));
 
+    const innerOrganizationRelations = get().organizationRelations
+      .filter((relation) => selected.has(relation.sourceId) && selected.has(relation.targetId))
+      .map((relation) => ({
+        ...relation,
+        id: `org-${generateId()}`,
+        sourceId: idMap.get(relation.sourceId)!,
+        targetId: idMap.get(relation.targetId)!,
+        createdAt: new Date().toISOString(),
+      }));
+
     const newIds = copies.map((c) => c.id);
     set((state) => ({
       nodes: [...state.nodes.map((n) => (n.selected ? { ...n, selected: false } : n)), ...copies],
       edges: [...state.edges, ...innerEdges],
+      organizationRelations: [...state.organizationRelations, ...innerOrganizationRelations],
       selectedNodeId: newIds.length === 1 ? newIds[0] : null,
       selectedNodeIds: newIds,
     }));

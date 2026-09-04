@@ -22,6 +22,9 @@ import { execSync, execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { randomBytes, randomUUID } from 'crypto';
+import { CLI_COMMAND_IDS } from './shared/cli-commands.mjs';
+import { CliControlPlane } from './shared/cli-control-plane.mjs';
 
 // ─── Environment ────────────────────────────────────────────────
 // Minimal .env loader (avoids dotenv dependency and Node --env-file version quirks)
@@ -550,6 +553,207 @@ app.all(/^\/api\/agents\/.*/, async (req, res) => {
 app.get(/^\/api\/roots(\/.*)?$/, async (req, res) => {
   const handled = await localRequire('./runtime/sessions-fs.cjs').handleSessions(req, res, req.path.replace(/^\/api/, ''));
   if (!handled) res.status(404).json({ error: 'not found' });
+});
+
+// ─── Local CLI control plane ────────────────────────────────────
+// The proxy never edits a canvas itself: the open page owns the Zustand /
+// IndexedDB state and executes authorized commands from this small queue.
+// A per-process bearer token is written to a user-only session file so local
+// CLI callers can authenticate without putting a secret in shell history.
+const CLI_SESSION_FILE = process.env.THOUGHTDAG_CLI_SESSION_FILE
+  || path.join(process.cwd(), '.thoughtdag-cli-session.json');
+const CLI_SCRIPT_PATH = process.env.THOUGHTDAG_CLI_SCRIPT
+  || path.join(process.cwd(), 'scripts', 'thoughtdag-cli.mjs');
+const CLI_TOKEN = randomBytes(32).toString('hex');
+const cliControl = new CliControlPlane(CLI_COMMAND_IDS, { createId: randomUUID });
+let cliWaiter = null;
+
+function writeCliSessionFile() {
+  try {
+    fs.mkdirSync(path.dirname(CLI_SESSION_FILE), { recursive: true });
+    fs.writeFileSync(CLI_SESSION_FILE, JSON.stringify({
+      version: 1,
+      url: `http://127.0.0.1:${PORT}`,
+      token: CLI_TOKEN,
+      pid: process.pid,
+      createdAt: new Date().toISOString(),
+    }, null, 2), { mode: 0o600 });
+    fs.chmodSync(CLI_SESSION_FILE, 0o600);
+  } catch (err) {
+    console.warn(`CLI session file unavailable: ${err.message}`);
+  }
+}
+
+function removeCliSessionFile() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(CLI_SESSION_FILE, 'utf8'));
+    if (saved.token === CLI_TOKEN) fs.unlinkSync(CLI_SESSION_FILE);
+  } catch { /* already gone or replaced by a newer server */ }
+}
+
+writeCliSessionFile();
+process.once('exit', removeCliSessionFile);
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.once(signal, () => { removeCliSessionFile(); process.exit(0); });
+}
+
+function cliBearerOk(req) {
+  return req.get('authorization') === `Bearer ${CLI_TOKEN}`;
+}
+
+function cliPageOriginOk(origin) {
+  if (!origin || !ALLOWED_ORIGIN.test(origin)) return false;
+  // The desktop/served build is same-origin, so do not let an unrelated local
+  // web app replace its permissions or client id. Dev keeps the cross-port
+  // localhost allowance because Vite and the proxy intentionally differ.
+  if (!process.env.SERVE_DIST) return true;
+  try {
+    const parsed = new URL(origin);
+    const originPort = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+    return originPort === String(PORT);
+  } catch {
+    return false;
+  }
+}
+
+function deliverNextCliEvent() {
+  const waiter = cliWaiter;
+  if (!waiter) return;
+  const event = cliControl.takeNext(waiter.clientId);
+  if (!event) return;
+  cliWaiter = null;
+  clearTimeout(waiter.timer);
+  waiter.res.json(event);
+}
+
+// Browser registration/configuration. Permissions are intersected with the
+// shared catalog here, so a forged page request cannot invent a command.
+app.put('/api/cli/control', (req, res) => {
+  const origin = req.get('origin');
+  if (!cliPageOriginOk(origin)) {
+    res.status(403).json({ error: 'CLI control settings must come from the local ThoughtDAG page' });
+    return;
+  }
+  const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId : '';
+  if (!clientId) { res.status(400).json({ error: 'clientId required' }); return; }
+  if (cliControl.clientId && cliControl.clientId !== clientId) {
+    cliControl.cancelActive('The active ThoughtDAG window changed');
+    deliverNextCliEvent();
+  }
+  const registration = cliControl.register({
+    clientId,
+    enabled: req.body?.enabled === true,
+    permissions: req.body?.permissions,
+    project: req.body?.project ?? null,
+  });
+  if (!cliControl.enabled) {
+    if (cliWaiter) {
+      clearTimeout(cliWaiter.timer);
+      cliWaiter.res.status(204).end();
+      cliWaiter = null;
+    }
+  } else if (registration.changingClient && cliWaiter) {
+    clearTimeout(cliWaiter.timer);
+    cliWaiter.res.status(409).json({ error: 'The active ThoughtDAG window changed' });
+    cliWaiter = null;
+  } else {
+    deliverNextCliEvent();
+  }
+  res.json({
+    enabled: cliControl.enabled,
+    permissions: [...cliControl.permissions],
+    sessionFile: CLI_SESSION_FILE,
+    cliScript: CLI_SCRIPT_PATH,
+  });
+});
+
+// Long poll used by the open page. The unguessable, tab-local client id is
+// enough for this same-origin delivery leg; external callers authenticate on
+// the enqueue/result-reading routes with the bearer token from the 0600 file.
+app.get('/api/cli/control/next', (req, res) => {
+  const clientId = typeof req.query.clientId === 'string' ? req.query.clientId : '';
+  if (!cliControl.touch(clientId)) {
+    res.status(409).json({ error: 'This is not the active ThoughtDAG window' });
+    return;
+  }
+  if (!cliControl.enabled) { res.status(204).end(); return; }
+  const event = cliControl.takeNext(clientId);
+  if (event) { res.json(event); return; }
+  if (cliWaiter) {
+    clearTimeout(cliWaiter.timer);
+    cliWaiter.res.status(204).end();
+  }
+  const timer = setTimeout(() => {
+    if (cliWaiter?.res === res) cliWaiter = null;
+    res.status(204).end();
+  }, 20_000);
+  cliWaiter = { res, timer, clientId };
+  req.on('close', () => {
+    if (cliWaiter?.res === res) {
+      clearTimeout(timer);
+      cliWaiter = null;
+    }
+  });
+});
+
+app.post('/api/cli/control/ack', (req, res) => {
+  const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId : '';
+  const id = typeof req.body?.id === 'string' ? req.body.id : '';
+  const outcome = cliControl.acknowledge(clientId, id);
+  if (!outcome.found) { res.status(409).json({ error: 'Unknown CLI command acknowledgement' }); return; }
+  res.json(outcome);
+});
+
+app.post('/api/cli/control/result', (req, res) => {
+  const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId : '';
+  const id = typeof req.body?.id === 'string' ? req.body.id : '';
+  const outcome = cliControl.complete(
+    clientId,
+    id,
+    req.body?.ok === true,
+    req.body?.ok === true ? req.body.result : String(req.body?.error || 'Command failed'),
+  );
+  if (!outcome.found) {
+    res.status(409).json({ error: 'Unknown CLI command result' });
+    return;
+  }
+  res.json({ ok: true, accepted: outcome.accepted, state: outcome.state });
+});
+
+app.get('/api/cli/status', (req, res) => {
+  if (!cliBearerOk(req)) { res.status(401).json({ error: 'Invalid CLI session token' }); return; }
+  const status = cliControl.status();
+  deliverNextCliEvent();
+  res.json(status);
+});
+
+app.post('/api/cli/commands', (req, res) => {
+  if (!cliBearerOk(req)) { res.status(401).json({ error: 'Invalid CLI session token' }); return; }
+  const command = typeof req.body?.command === 'string' ? req.body.command : '';
+  const outcome = cliControl.enqueue(command, req.body?.args, req.body?.timeoutMs);
+  if (!outcome.record) { res.status(outcome.status).json({ error: outcome.error }); return; }
+  deliverNextCliEvent();
+  res.status(202).json({
+    id: outcome.record.id,
+    projectId: outcome.record.projectId,
+    expiresAt: outcome.record.expiresAt,
+  });
+});
+
+app.post('/api/cli/commands/:id/cancel', (req, res) => {
+  if (!cliBearerOk(req)) { res.status(401).json({ error: 'Invalid CLI session token' }); return; }
+  const outcome = cliControl.cancel(req.params.id);
+  if (!outcome.found) { res.status(404).json({ error: 'CLI command not found or expired' }); return; }
+  deliverNextCliEvent();
+  res.json({ ok: true, state: outcome.state, running: outcome.running });
+});
+
+app.get('/api/cli/commands/:id', (req, res) => {
+  if (!cliBearerOk(req)) { res.status(401).json({ error: 'Invalid CLI session token' }); return; }
+  const outcome = cliControl.result(req.params.id);
+  deliverNextCliEvent();
+  if (!outcome.found) { res.status(404).json({ error: 'CLI command not found or expired' }); return; }
+  res.status(outcome.pending ? 202 : 200).json(outcome);
 });
 
 // PDF text extraction (pdfjs-dist) + page rendering (pdftoppm/poppler)

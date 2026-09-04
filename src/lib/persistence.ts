@@ -19,12 +19,37 @@ const WRITE_DELAY_MS = 1000;
 
 let pending: { name: string; value: unknown } | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
+let beforeFlush: (() => void) | null = null;
+let preparingFlush = false;
+
+/** Register the store's synchronous durability-boundary hook without making
+    this low-level storage module import the store (which would be circular). */
+export function setBeforePersistenceFlush(hook: (() => void) | null): void {
+  beforeFlush = hook;
+}
+
+function preparePendingValue(): void {
+  if (preparingFlush) return;
+  preparingFlush = true;
+  try {
+    beforeFlush?.();
+  } finally {
+    preparingFlush = false;
+  }
+  // The hook may have synchronously produced a fresher persisted value and
+  // armed a new debounce. This flush owns that value now.
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
+}
 
 function flush() {
   if (timer) {
     clearTimeout(timer);
     timer = null;
   }
+  preparePendingValue();
   if (pending) {
     const { name, value } = pending;
     pending = null;
@@ -39,6 +64,7 @@ export async function flushPendingWrites(): Promise<void> {
     clearTimeout(timer);
     timer = null;
   }
+  preparePendingValue();
   if (pending) {
     const { name, value } = pending;
     pending = null;

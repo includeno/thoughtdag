@@ -116,6 +116,10 @@ export const createLlmSlice: StateCreator<StoreState, [], [], LlmSlice> = (set, 
       : get().nodes;
     const newNodes = autoLayout([...updatedNodes, newNode], newEdges);
     set({ nodes: newNodes, edges: newEdges, selectedNodeId: id });
+    // Creation is durable before the async stream starts. A refresh or stop
+    // mid-generation can therefore undo the command cleanly; the settled
+    // answer is recorded as a separate result transaction.
+    get().pushHistory('question.create');
 
     // Build full context from ancestors + explicit role for the new node
     const selfNode = get().nodes.find((n) => n.id === id);
@@ -584,6 +588,9 @@ ${intent.trim()}` : ''}` },
               ...state.edges.filter((e) => !allRemove.has(e.source) && !allRemove.has(e.target)),
               ...rewired,
             ],
+            organizationRelations: state.organizationRelations.filter(
+              (relation) => !allRemove.has(relation.sourceId) && !allRemove.has(relation.targetId),
+            ),
           }));
         }
         set((state) => ({ nodes: autoLayout(state.nodes, state.edges) }));

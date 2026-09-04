@@ -7,9 +7,17 @@
   "scripts": {
     "start": "electron .",
     "payload": "node scripts/prepare-payload.mjs",
-    "dist:mac": "npm run payload && electron-builder --mac dmg zip --arm64 --x64 --publish never",
-    "dist:win": "npm run payload && electron-builder --win nsis --x64 --publish never",
-    "dist:linux": "npm run payload && electron-builder --linux AppImage --x64 --publish never"
+    "package": "node scripts/package.mjs",
+    "pack:dir": "node scripts/package.mjs --mode dir --sign never",
+    "dist:local": "node scripts/package.mjs --sign never",
+    "dist:mac": "node scripts/package.mjs --platform mac --arch all",
+    "dist:mac:arm64": "node scripts/package.mjs --platform mac --arch arm64",
+    "dist:mac:x64": "node scripts/package.mjs --platform mac --arch x64",
+    "dist:mac:universal": "node scripts/package.mjs --platform mac --arch universal",
+    "dist:win": "node scripts/package.mjs --platform win --arch x64",
+    "dist:win:arm64": "node scripts/package.mjs --platform win --arch arm64",
+    "dist:linux": "node scripts/package.mjs --platform linux --arch x64",
+    "dist:linux:arm64": "node scripts/package.mjs --platform linux --arch arm64"
   },
   "devDependencies": {
     "electron": "^43.3.0",

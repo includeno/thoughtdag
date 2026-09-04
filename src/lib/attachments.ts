@@ -35,6 +35,10 @@ export const FILE_INPUT_ACCEPT =
 // Identity of an attachment's content — used to dedup the same file uploaded
 // to multiple nodes or reached via multiple DAG paths.
 export function attachmentFingerprint(att: Attachment): string {
+  // Vaulted binaries have no inline content. Their stable, content-derived
+  // vaultId is the payload identity; falling back to name + size here would
+  // conflate distinct documents that merely look alike in file metadata.
+  if (att.contentInVault || att.vaultId) return `vault:${att.vaultId ?? att.id}`;
   return `${att.name}|${att.size}|${att.content?.substring(0, 100)}`;
 }
 

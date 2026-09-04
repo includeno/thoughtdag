@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { KnowledgeQuery } from './knowledge';
 
 // Transient UI state (toasts, confirm dialog) — deliberately separate from
 // the main store: no persistence, no undo history, and the imperative API
@@ -104,6 +105,9 @@ interface UiState {
   /** Browser-side API key dialog (the .env-free path in). */
   apiKeyModalOpen: boolean;
   setApiKeyModalOpen: (open: boolean) => void;
+  /** Local CLI execution permissions and command groups. */
+  cliSettingsOpen: boolean;
+  setCliSettingsOpen: (open: boolean) => void;
   /** Monotonic signal: each bump asks the global model picker to drop open
       (the "look, your models are here" moment after a connect succeeds). */
   modelPickerPing: number;
@@ -112,6 +116,20 @@ interface UiState {
       active search). Nodes NOT in the set dim out — the searchlight. */
   searchHitIds: Set<string> | null;
   setSearchHitIds: (ids: Set<string> | null) => void;
+  /** Stable knowledge-workspace focus, independent from transient multi-select. */
+  activeNodeId: string | null;
+  setActiveNodeId: (id: string | null) => void;
+  canvasView: 'canvas' | 'tree' | 'card';
+  setCanvasView: (view: UiState['canvasView']) => void;
+  /** 0 = full graph, 1/2 = active-node neighborhood depth. */
+  localDepth: 0 | 1 | 2;
+  setLocalDepth: (depth: UiState['localDepth']) => void;
+  knowledgeQuery: KnowledgeQuery;
+  setKnowledgeQuery: (query: KnowledgeQuery) => void;
+  metadataEditorNodeIds: string[] | null;
+  setMetadataEditorNodeIds: (ids: string[] | null) => void;
+  selectedOrganizationRelationId: string | null;
+  setSelectedOrganizationRelationId: (id: string | null) => void;
   /** Node whose answer is open in the large reading overlay. */
   responseViewerNodeId: string | null;
   setResponseViewerNodeId: (id: string | null) => void;
@@ -268,9 +286,28 @@ export const useUiStore = create<UiState>((set, get) => ({
   setPluginUpdate: (u) => set({ pluginUpdate: u }),
   apiKeyModalOpen: false,
   setApiKeyModalOpen: (open) => set({ apiKeyModalOpen: open }),
+  cliSettingsOpen: false,
+  setCliSettingsOpen: (open) => set({ cliSettingsOpen: open }),
   modelPickerPing: 0,
   searchHitIds: null,
   setSearchHitIds: (ids) => set({ searchHitIds: ids }),
+  activeNodeId: null,
+  setActiveNodeId: (id) => set((state) => ({
+    activeNodeId: id,
+    knowledgeQuery: state.knowledgeQuery.relation && state.knowledgeQuery.relation.scope !== 'all'
+      ? { ...state.knowledgeQuery, relation: { ...state.knowledgeQuery.relation, anchorNodeId: id ?? undefined } }
+      : state.knowledgeQuery,
+  })),
+  canvasView: 'canvas',
+  setCanvasView: (view) => set({ canvasView: view }),
+  localDepth: 0,
+  setLocalDepth: (depth) => set({ localDepth: depth }),
+  knowledgeQuery: { archived: 'any', relation: { scope: 'all', domain: 'combined' } },
+  setKnowledgeQuery: (query) => set({ knowledgeQuery: query }),
+  metadataEditorNodeIds: null,
+  setMetadataEditorNodeIds: (ids) => set({ metadataEditorNodeIds: ids }),
+  selectedOrganizationRelationId: null,
+  setSelectedOrganizationRelationId: (id) => set({ selectedOrganizationRelationId: id }),
   pingModelPicker: () => set((s) => ({ modelPickerPing: s.modelPickerPing + 1 })),
   responseViewerNodeId: null,
   setResponseViewerNodeId: (id) => set({ responseViewerNodeId: id }),

@@ -10,6 +10,9 @@ export interface Attachment {
   /** Bulky payload lives in the attachment vault (IndexedDB), not here —
       read through loadAttachmentContent(). Exports inline it back. */
   contentInVault?: boolean;
+  /** Stable payload identity. Duplicated nodes may use a new attachment id
+      while sharing one immutable vaulted binary. */
+  vaultId?: string;
   thumbnailUrl?: string; // data URL for image preview
   extractedText?: string; // companion text (PDF extraction / image auto-understanding)
   extractedBy?: string; // which model produced extractedText (extraction provenance)
@@ -102,6 +105,33 @@ export interface Reference {
   date?: string;
 }
 
+/** Project-scoped, user-managed classification primitives. Stable ids keep
+    node assignments intact when a definition is renamed. */
+export interface TagDefinition {
+  id: string;
+  name: string;
+  color: string;
+  createdAt: string;
+}
+
+export interface NodeTypeDefinition {
+  id: string;
+  name: string;
+  color: string;
+  createdAt: string;
+}
+
+/** Knowledge organization lives outside ThoughtEdge on purpose. ThoughtEdge
+    is executable LLM context; these relations are navigation-only and must
+    never enter prompt traversal, layout, staleness, or generation cascades. */
+export interface OrganizationRelation {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  kind: 'parent' | 'jump';
+  createdAt: string;
+}
+
 export interface ThoughtData extends Record<string, unknown> {
   question: string;
   response: string;
@@ -184,6 +214,10 @@ export interface ThoughtData extends Record<string, unknown> {
       the mirror outlives runner-side cleanup (sessions are short-lived
       upstream — the canvas is the archive). */
   source?: { question: string; response: string };
+  /** User-managed knowledge classification. Independent from stepKind, which
+      remains the system execution/rendering type. */
+  tagIds?: string[];
+  customTypeId?: string;
   linkUrl?: string; // link node: the source URL
   linkTitle?: string; // link node: page title (or a ⚠-prefixed fetch error)
   linkFetchedAt?: string; // link node: ISO timestamp of the snapshot (web content drifts)
@@ -296,13 +330,25 @@ export interface ThoughtEdge extends Edge {
         path = structural feed line, ref = reference into the context,
         down = one step downstream. */
     focusRole?: 'path' | 'ref' | 'down';
+    /** Render-only adapter fields for an OrganizationRelation. These never
+        belong in the persisted context-edge array. */
+    isOrganization?: boolean;
+    organizationKind?: OrganizationRelation['kind'];
+    organizationRelationId?: string;
   };
 }
 
 export interface DAGState {
   nodes: ThoughtNode[];
   edges: ThoughtEdge[];
-  history: { nodes: ThoughtNode[]; edges: ThoughtEdge[] }[];
+  organizationRelations: OrganizationRelation[];
+  taxonomy: { tags: TagDefinition[]; nodeTypes: NodeTypeDefinition[] };
+  history: {
+    nodes: ThoughtNode[];
+    edges: ThoughtEdge[];
+    organizationRelations: OrganizationRelation[];
+    taxonomy: { tags: TagDefinition[]; nodeTypes: NodeTypeDefinition[] };
+  }[];
   historyIndex: number;
 }
 

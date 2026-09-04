@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "server": "node server.mjs",
+    "cli": "node scripts/thoughtdag-cli.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "smoke": "node scripts/smoke.mjs",
@@ -16,7 +17,13 @@
     "docs:preview": "vitepress preview docs",
     "desktop": "npm run build && cd desktop && electron .",
     "cli:build": "esbuild cli/src/main.ts --bundle --platform=node --format=esm --target=node20 --define:import.meta.env={} --outfile=cli/dist/thoughtdag.mjs --log-level=warning",
-    "dsh:build": "node dsh/scripts/build.mjs ."
+    "dsh:build": "node dsh/scripts/build.mjs .",
+    "test:capabilities": "node scripts/test-knowledge.mjs && node scripts/test-transactions.mjs && node scripts/test-transaction-boundaries.mjs && node scripts/test-attachment-vault.mjs && node scripts/cli-protocol-test.mjs && node scripts/cli-http-test.mjs && node scripts/cli-attachment-permission-test.mjs && node scripts/cli-knowledge-transfer-test.mjs && node scripts/web-import-validation-test.mjs",
+    "desktop:package": "node desktop/scripts/package.mjs",
+    "desktop:package:dir": "node desktop/scripts/package.mjs --mode dir --sign never",
+    "desktop:package:mac": "node desktop/scripts/package.mjs --platform mac --arch all",
+    "desktop:package:win": "node desktop/scripts/package.mjs --platform win --arch x64",
+    "desktop:package:linux": "node desktop/scripts/package.mjs --platform linux --arch x64"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.8",

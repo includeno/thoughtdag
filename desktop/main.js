@@ -53,13 +53,24 @@ async function waitReady(port, tries = 120) {
 
 async function boot() {
   const port = await freePort();
+  const cliSessionFile = path.join(app.getPath('userData'), 'cli-session.json');
+  const cliScript = app.isPackaged
+    ? path.join(ROOT, 'scripts', 'thoughtdag-cli.mjs')
+    : path.join(ROOT, 'scripts', 'thoughtdag-cli.mjs');
   serverProc = utilityProcess.fork(path.join(ROOT, 'server.mjs'), [], {
     cwd: ROOT, // .env resolves from the project root, same as `npm run server`
     // HOST is forced to loopback AFTER the spread: the desktop shell only ever
     // connects to 127.0.0.1, so the bundled server must never bind anything
     // else — not even if the user's ambient environment carries HOST=0.0.0.0.
     // The HOST opt-in escape hatch is for `npm run server` power users only.
-    env: { ...process.env, PORT: String(port), SERVE_DIST: path.join(ROOT, 'dist'), HOST: '127.0.0.1' },
+    env: {
+      ...process.env,
+      PORT: String(port),
+      SERVE_DIST: path.join(ROOT, 'dist'),
+      HOST: '127.0.0.1',
+      THOUGHTDAG_CLI_SESSION_FILE: cliSessionFile,
+      THOUGHTDAG_CLI_SCRIPT: cliScript,
+    },
     stdio: 'pipe',
     serviceName: 'thoughtdag-server',
   });
