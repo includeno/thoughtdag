@@ -106,21 +106,31 @@ export function generateMaterialSummary(nodeId: string, name: string, text: stri
   }).catch(() => {});
 }
 
-export async function ingestFiles(nodeId: string, files: FileList | File[]): Promise<void> {
+export interface IngestFilesOptions {
+  /** Disable every model-backed or cascade side effect while retaining local extraction. */
+  allowGenerativeProcessing?: boolean;
+}
+
+export async function ingestFiles(
+  nodeId: string,
+  files: FileList | File[],
+  options: IngestFilesOptions = {},
+): Promise<void> {
+  const allowGenerativeProcessing = options.allowGenerativeProcessing !== false;
   for (const file of Array.from(files)) {
     await processFile(file, {
       add: (att) => {
         useStore.getState().addAttachment(nodeId, att);
-        triggerParadigmCascade(useStore.getState, nodeId);
+        if (allowGenerativeProcessing) triggerParadigmCascade(useStore.getState, nodeId);
         // Images auto-extract on arrival: one VLM call, cached forever as
         // the image's companion text (same slot PDFs use)
-        if (att.type.startsWith('image/')) void extractImage(nodeId, att.id);
+        if (allowGenerativeProcessing && att.type.startsWith('image/')) void extractImage(nodeId, att.id);
       },
       update: (attId, patch) => {
         useStore.getState().setAttachmentData(nodeId, attId, patch);
         // PDF text arrives late — re-check readiness after extraction
-        triggerParadigmCascade(useStore.getState, nodeId);
-        if (patch.extractedText) {
+        if (allowGenerativeProcessing) triggerParadigmCascade(useStore.getState, nodeId);
+        if (allowGenerativeProcessing && patch.extractedText) {
           const att = useStore.getState().nodes.find((n) => n.id === nodeId)?.data.attachments?.find((a) => a.id === attId);
           generateMaterialSummary(nodeId, att?.name ?? '', patch.extractedText);
         }

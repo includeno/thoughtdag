@@ -1,10 +1,10 @@
 import { create } from 'zustand';
 import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
-import { useStore } from './index';
+import { flushPendingTransaction, useStore } from './index';
 import { activeAbortControllers } from './streaming';
 import { flushPendingWrites } from '../lib/persistence';
 import { buildRuleOutRuleIn } from '../lib/paradigms/rule-out-rule-in';
-import { toast } from '../lib/ui-store';
+import { toast, useUiStore } from '../lib/ui-store';
 import { t } from '../i18n';
 
 // Project layer: each canvas persists under its own IndexedDB key; this
@@ -106,11 +106,19 @@ export async function switchProject(id: string): Promise<void> {
   useProjects.setState({ switching: true });
   try {
     await drainGenerations();
+    // Legacy editing surfaces still commit through a short coalescing window.
+    // Close that window before changing the persist key, otherwise the graph
+    // can land under the old project without its matching Undo transaction.
+    if (!flushPendingTransaction('project.switch')) {
+      toast('info', t('toast.projectSwitchBusy'));
+      return;
+    }
     await flushPendingWrites();
     suppressTouch = true;
     useStore.persist.setOptions({ name: projectStorageKey(id) });
     await useStore.persist.rehydrate();
     useStore.setState({ selectedNodeId: null, selectedNodeIds: [] });
+    useUiStore.setState({ activeNodeId: null, selectedOrganizationRelationId: null, localDepth: 0 });
     useProjects.setState({ activeId: id });
     await saveMeta();
   } finally {
@@ -171,7 +179,7 @@ export async function adoptImportedProject(
 export async function createBuiltinParadigm(lang: 'en' | 'zh'): Promise<void> {
   const { name, nodes, edges } = buildRuleOutRuleIn(lang);
   const id = crypto.randomUUID();
-  await idbSet(projectStorageKey(id), JSON.stringify({ state: { nodes, edges }, version: 1 }));
+  await idbSet(projectStorageKey(id), JSON.stringify({ state: { nodes, edges }, version: 2 }));
   await adoptImportedProject(id, name, 'paradigm');
 }
 

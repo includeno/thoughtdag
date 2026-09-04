@@ -1,8 +1,52 @@
-import type { ThoughtNode, ThoughtEdge, Highlight, Attachment, CanvasEvent, CanvasOp } from '../types';
+import type {
+  ThoughtNode,
+  ThoughtEdge,
+  Highlight,
+  Attachment,
+  CanvasEvent,
+  CanvasOp,
+  OrganizationRelation,
+  TagDefinition,
+  NodeTypeDefinition,
+} from '../types';
+
+export interface ProjectTaxonomy {
+  tags: TagDefinition[];
+  nodeTypes: NodeTypeDefinition[];
+}
 
 export interface Snapshot {
   nodes: ThoughtNode[];
   edges: ThoughtEdge[];
+  organizationRelations: OrganizationRelation[];
+  taxonomy: ProjectTaxonomy;
+}
+
+export interface EntityChange<T> {
+  id: string;
+  before?: T;
+  after?: T;
+  beforeIndex?: number;
+  afterIndex?: number;
+}
+
+/** Durable reversible record. `change` is a user operation; undo/redo append
+    compensation entries instead of mutating history, so the audit trail stays
+    linear while the graph can move backward and forward across reloads. */
+export interface CanvasTransaction {
+  id: string;
+  at: string;
+  beforeRevision: number;
+  afterRevision: number;
+  kind: 'change' | 'undo' | 'redo';
+  label: string;
+  targetId?: string;
+  changes: {
+    nodes: EntityChange<ThoughtNode>[];
+    edges: EntityChange<ThoughtEdge>[];
+    organizationRelations: EntityChange<OrganizationRelation>[];
+    taxonomy?: { before: ProjectTaxonomy; after: ProjectTaxonomy };
+  };
 }
 
 export interface EventSlice {
@@ -14,9 +58,34 @@ export interface EventSlice {
 export interface HistorySlice {
   history: Snapshot[];
   historyIndex: number;
-  pushHistory: () => void;
+  transactions: CanvasTransaction[];
+  undoableTransactionIds: string[];
+  redoableTransactionIds: string[];
+  /** Monotonic project revision; every command/compensation advances once. */
+  revision: number;
+  pushHistory: (label?: string) => void;
   undo: () => void;
   redo: () => void;
+}
+
+export interface KnowledgeSlice {
+  organizationRelations: OrganizationRelation[];
+  taxonomy: ProjectTaxonomy;
+  createOrganizationNode: (nodeId: string, direction: 'parent' | 'child') => string | null;
+  connectOrganization: (sourceId: string, targetId: string, kind: OrganizationRelation['kind']) => string | null;
+  deleteOrganizationRelations: (relationIds: string[]) => boolean;
+  createTag: (name: string, color?: string) => string | null;
+  renameTag: (tagId: string, name: string) => void;
+  deleteTag: (tagId: string) => void;
+  createNodeType: (name: string, color?: string) => string | null;
+  renameNodeType: (typeId: string, name: string) => void;
+  deleteNodeType: (typeId: string) => void;
+  setNodeTag: (nodeIds: string[], tagId: string, assigned: boolean) => void;
+  setNodeCustomType: (nodeIds: string[], typeId: string | undefined) => void;
+  classifyNodes: (
+    nodeIds: string[],
+    classification: { tagIds?: string[]; customTypeId?: string | null },
+  ) => void;
 }
 
 export interface NodeSlice {
@@ -129,6 +198,16 @@ export interface AttachmentSlice {
   getInheritedAttachments: (nodeId: string) => { attachment: Attachment; sourceNodeId: string; sourceQuestion: string; excludedByAncestor: boolean }[];
 }
 
-export type StoreState = HistorySlice & NodeSlice & LlmSlice & RoleSlice & HighlightSlice & AttachmentSlice & EvaluatorSlice & EventSlice;
+export type StoreState = HistorySlice & NodeSlice & LlmSlice & RoleSlice & HighlightSlice & AttachmentSlice & EvaluatorSlice & EventSlice & KnowledgeSlice;
 
-export type PersistedState = { nodes: ThoughtNode[]; edges: ThoughtEdge[]; events?: CanvasEvent[] };
+export type PersistedState = {
+  nodes: ThoughtNode[];
+  edges: ThoughtEdge[];
+  events?: CanvasEvent[];
+  organizationRelations?: OrganizationRelation[];
+  taxonomy?: ProjectTaxonomy;
+  transactions?: CanvasTransaction[];
+  undoableTransactionIds?: string[];
+  redoableTransactionIds?: string[];
+  revision?: number;
+};

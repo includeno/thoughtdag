@@ -54,6 +54,15 @@ Mind maps are drawn; this map grows. Chat leaves no map at all.
 - **Canvas search (toolbar icon or Cmd+F)**: exact search across questions, answers, note bodies, highlights, link titles and material names; while you type, matching nodes stay lit and the rest of the map dims (the searchlight); picking a result flies there, opens the panel and scrolls to the exact match
 - **Ancestor edge highlighting**: the selected node's path to root turns gold, others dim
 
+## Large-canvas organization
+
+- **Active-node neighborhood**: switch between the full canvas and one- or two-level local projections without changing node positions or context semantics
+- **Independent organization relations**: parent, child and directed jump links live outside LLM context, with multi-parent support and parent-cycle validation
+- **Project taxonomy**: reusable tags and custom node types support create, rename, delete and batch assignment without replacing the system `stepKind`
+- **Combined filters**: text, system/custom type, multiple tags, creation date, relation scope and archive status combine with AND semantics, including filter-only queries
+- **Tree / Card views**: expandable organization hierarchy and date-grouped cards share active-node, selection and query state with Canvas
+- **Durable recovery**: append-only change/undo/redo transactions, monotonic revisions and persisted cursors keep Undo/Redo available after reload
+
 ## Generation & automation
 
 - **Streaming responses**: SSE token-by-token rendering with blinking cursor, in node and panel; Stop keeps partial content; failed generations show Retry (errors go to toasts, never into answers)
@@ -88,13 +97,14 @@ Mind maps are drawn; this map grows. Chat leaves no map at all.
 - **Multi-select**: box-select nodes: Merge Summary / Merge & Delete / Align / Export / Delete
 - **Read-only share links**: one link carries the whole graph (compressed into the URL, no server storage); the viewer walks, zooms and reads but cannot edit; share from the ⋯ menu
 - **@-mentions**: type @ in any ask box to reference a node by name; mentions not already upstream get a real dashed reference edge (visible, priced, convertible), upstream ones become precise designators
-- **Automatic folder backup**: grant a folder once and every change debounces into a real `.thoughtdag.json` on disk; point it at a synced directory and it doubles as cross-device sync with zero servers; a toolbar control center shows the last write and backs up every canvas on demand
+- **Automatic folder backup**: grant a folder once and every change debounces the active canvas into a real `.thoughtdag.json` on disk; point it at a synced directory and it doubles as cross-device sync with zero servers; a toolbar control center shows the last write and can back up the active canvas on demand
 - **Event log**: an append-only record of semantic operations (asks, generations, highlights, archiving, undo) with timestamps, metadata-only; travels in backups, exports as CSV for R/Python analysis
+- **Local CLI control plane**: off by default and authorized by group/command; supports reading, editing, organizing, import/export and history while destructive permissions remain disabled by default
 - **Node context menu**: right-click for open panel / reading view / regenerate (in place or as a new node) / copy / duplicate / archive / delete; right-clicking selected text keeps the native menu
 - **Data persistence**: IndexedDB auto-save (1s debounce), survives refresh; multi-canvas projects (create/switch/rename/delete)
 - **Export system**: whole-graph JSON backup and import; context-chain / multi-select Markdown export; memory and roles export too: easy in, easy out
 - **Import ChatGPT / Claude exports**: drop conversations.json into Import; edit/regenerate branches are preserved as graph forks, each conversation becomes its own canvas
-- **Undo/Redo**: Cmd+Z / Cmd+Shift+Z, full state snapshots
+- **Undo/Redo**: Cmd+Z / Cmd+Shift+Z through entity-level `before/after` compensation transactions persisted with each project
 - **Keyboard shortcuts**: Space collapse, R regenerate, arrow keys walk the DAG, Esc steps out (legend in the tutorial)
 - **Bilingual UI**: auto-detects browser language, one-click EN/中 switch
 - **Built-in tutorial**: a ten-step illustrated hero page, from asking to paradigms

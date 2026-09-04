@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import { AlignVerticalJustifyStart, Archive, ClipboardList, Copy, FileDown, GitBranch, Highlighter, Trash2 } from 'lucide-react';
+import { AlignVerticalJustifyStart, Archive, ClipboardList, Copy, FileDown, GitBranch, Highlighter, Link2, Tags, Trash2 } from 'lucide-react';
 import { useStore } from '../store';
-import { confirmDialog } from '../lib/ui-store';
+import { confirmDialog, toast, useUiStore } from '../lib/ui-store';
 import { selectionMarkdown, downloadMarkdown } from '../lib/export';
 import { isImeComposing } from '../utils';
 import { useT, t as ti, fmt } from '../i18n';
@@ -13,7 +13,7 @@ import { useT, t as ti, fmt } from '../i18n';
 type PendingAction = 'explore' | 'merge' | 'mergeDelete' | 'weave' | null;
 
 export default function SelectionToolbar() {
-  const { selectedNodeIds, nodes, batchDelete, batchMergeSummarize, weaveHighlights, exploreFrom, alignSelection, setArchived, duplicateSelection } = useStore();
+  const { selectedNodeIds, nodes, batchDelete, batchMergeSummarize, weaveHighlights, exploreFrom, alignSelection, setArchived, duplicateSelection, connectOrganization } = useStore();
   const t = useT();
   const [pending, setPending] = useState<PendingAction>(null);
   const [input, setInput] = useState('');
@@ -36,6 +36,13 @@ export default function SelectionToolbar() {
   const selectedNodes = selectedNodeIds
     .map((id) => nodes.find((n) => n.id === id))
     .filter(Boolean);
+  const jumpLabel = (node: typeof selectedNodes[number]) => (
+    node?.data.linkTitle || node?.data.question || node?.data.attachments?.[0]?.name || node?.id || '—'
+  ).replace(/\s+/g, ' ').trim().slice(0, 24);
+  const jumpSource = selectedNodes[0];
+  const jumpTarget = selectedNodes[1];
+  const jumpSourceLabel = jumpLabel(jumpSource);
+  const jumpTargetLabel = jumpLabel(jumpTarget);
 
   const totalTokens = selectedNodes.reduce((sum, n) => sum + (n?.data.tokenCount || 0), 0);
 
@@ -132,6 +139,35 @@ export default function SelectionToolbar() {
           >
             <Copy size={14} strokeWidth={1.75} />
           </button>
+
+          <button
+            onClick={() => useUiStore.getState().setMetadataEditorNodeIds(selectedNodeIds)}
+            className="bg-wash hover:bg-line text-ink-muted w-8 h-7 rounded-lg transition-colors flex items-center justify-center"
+            title={t('metadata.batchEdit')}
+          >
+            <Tags size={14} strokeWidth={1.75} />
+          </button>
+
+          {selectedNodeIds.length === 2 && (
+            <button
+              onClick={() => {
+                void confirmDialog({
+                  title: ti('knowledge.createJumpConfirmTitle'),
+                  message: fmt(ti('knowledge.createJumpConfirm'), { source: jumpSourceLabel, target: jumpTargetLabel }),
+                  confirmLabel: ti('knowledge.createJumpConfirmAction'),
+                }).then((ok) => {
+                  if (!ok) return;
+                  const id = connectOrganization(selectedNodeIds[0], selectedNodeIds[1], 'jump');
+                  toast(id ? 'success' : 'info', id ? ti('knowledge.jumpCreated') : ti('knowledge.jumpExists'));
+                });
+              }}
+              className="bg-wash hover:bg-line text-ink-muted max-w-[220px] h-7 px-2 rounded-lg transition-colors flex items-center justify-center gap-1.5"
+              title={fmt(t('knowledge.createJumpDirection'), { source: jumpSourceLabel, target: jumpTargetLabel })}
+            >
+              <Link2 size={14} strokeWidth={1.75} className="shrink-0" />
+              <span className="truncate text-2xs">{jumpSourceLabel} → {jumpTargetLabel}</span>
+            </button>
+          )}
 
           <button
             onClick={() => {

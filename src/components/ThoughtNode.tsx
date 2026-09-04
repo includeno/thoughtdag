@@ -19,6 +19,7 @@ import { useT, fmt } from '../i18n';
 import MentionSurface from './ui/NodeMention';
 import { useMentions } from '../lib/mentions';
 import { isViewerMode } from '../lib/viewer';
+import NodeTaxonomyBadges from './ui/NodeTaxonomyBadges';
 
 export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
   // Actions are stable references: selecting them one by one (instead of a
@@ -484,6 +485,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
             {data.isCollapsed ? <ChevronRight size={18} strokeWidth={1.75} /> : <ChevronDown size={18} strokeWidth={1.75} />}
           </button>
           <span className="text-xs text-ink-faint font-mono">{data.tokenCount} tok</span>
+          <NodeTaxonomyBadges tagIds={data.tagIds} customTypeId={data.customTypeId} />
           {data.condensedFrom && data.condensedFrom.length > 0 && (
             <button
               onClick={(e) => {

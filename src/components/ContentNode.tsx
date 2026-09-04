@@ -12,6 +12,7 @@ import { Markdown } from './Markdown';
 import { countTokens } from '../utils';
 import { useT, fmt } from '../i18n';
 import { isViewerMode } from '../lib/viewer';
+import NodeTaxonomyBadges from './ui/NodeTaxonomyBadges';
 
 // Content nodes: canvas material, not turns. A note (markdown), a file
 // (attachments) or a link (stamped web snapshot) that never generates — it
@@ -119,6 +120,11 @@ export default function ContentNode({ id, data, selected }: NodeProps<ThoughtNod
         {/* reader-grown branches leave through this handle — without it,
             React Flow drops those edges entirely at glyph zoom */}
         <Handle type="source" position={Position.Right} id="branch" isConnectable={false} className="!bg-transparent !w-0 !h-0 !border-0 !pointer-events-none" style={{ top: '50%', left: 'calc(50% + 56px)', right: 'auto' }} />
+        {/* Navigation-only organization relations may point at material. The
+            zero-size targets render those projections without accepting an
+            executable context wire from the user. */}
+        <Handle type="target" position={Position.Top} id="org-top" isConnectable={false} className="!bg-transparent !w-0 !h-0 !border-0 !pointer-events-none" />
+        <Handle type="target" position={Position.Left} id="org-left" isConnectable={false} className="!bg-transparent !w-0 !h-0 !border-0 !pointer-events-none" />
       </div>
     );
   }
@@ -141,7 +147,9 @@ export default function ContentNode({ id, data, selected }: NodeProps<ThoughtNod
       }}
       onDragOver={(e) => { if (kind === 'file') { e.preventDefault(); e.stopPropagation(); } }}
     >
-      {/* Pure source: material feeds context, nothing flows INTO it — hence no target handle. */}
+      {/* Material remains a pure CONTEXT source. The invisible targets at
+          the bottom accept render-only organization projections, never a
+          user-created context wire. */}
 
       {/* header: drag handle + identity + linked state + delete */}
       <div className={`flex items-center justify-between px-4 py-2 border-b cursor-grab active:cursor-grabbing drag-handle shrink-0 ${kind === 'note' ? 'border-amber-200/70' : 'border-line/70'}`}>
@@ -150,6 +158,7 @@ export default function ContentNode({ id, data, selected }: NodeProps<ThoughtNod
           {kind === 'link'
             ? <span className="text-2xs text-ink-muted truncate">{linkDomain}</span>
             : <span className="text-2xs text-ink-faint font-mono">{kind === 'note' ? `${data.tokenCount} tok` : `${attachments.length}`}</span>}
+          <NodeTaxonomyBadges tagIds={data.tagIds} customTypeId={data.customTypeId} compact />
           {clipSourceName && (
             <button
               onClick={openClipSource}
@@ -405,6 +414,8 @@ export default function ContentNode({ id, data, selected }: NodeProps<ThoughtNod
       <Handle type="source" position={Position.Bottom} id="continue" className={`!bg-ink-faint !border-2 !border-white tdag-handle ${zoomedOut ? '!w-6 !h-6 tdag-handle-lg' : '!w-3.5 !h-3.5'}`} />
       {/* Invisible side anchor so material references can exit sideways */}
       <Handle type="source" position={Position.Right} id="branch" isConnectable={false} className="!bg-transparent !w-0 !h-0 !border-0 !pointer-events-none" style={{ top: '50%' }} />
+      <Handle type="target" position={Position.Top} id="org-top" isConnectable={false} className="!bg-transparent !w-0 !h-0 !border-0 !pointer-events-none" />
+      <Handle type="target" position={Position.Left} id="org-left" isConnectable={false} className="!bg-transparent !w-0 !h-0 !border-0 !pointer-events-none" />
     </div>
   );
 }

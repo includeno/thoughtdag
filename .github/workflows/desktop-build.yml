@@ -50,7 +50,7 @@ jobs:
       - run: npm run build
       - run: npm ci
         working-directory: desktop
-      - run: npm run ${{ matrix.script }}
+      - run: npm run ${{ matrix.script }} -- --skip-build
         working-directory: desktop
         env:
           # macOS signing + notarization: absent secrets = unsigned build

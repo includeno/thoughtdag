@@ -1,8 +1,9 @@
-import { Globe, GraduationCap } from 'lucide-react';
+import { Globe, GraduationCap, Wrench } from 'lucide-react';
 import { useUiStore } from '../../lib/ui-store';
 import { useModels } from '../../lib/use-models';
 import { directWithoutSearch } from '../../lib/direct-llm';
 import { useT } from '../../i18n';
+import { useMcpServers } from '../../lib/use-mcp';
 
 // Per-ask search permissions, shown next to every input that asks. The two
 // toggles edit the shared default (ui-store, persisted); each new node
@@ -12,6 +13,9 @@ export default function SearchToggles({ size = 16 }: { size?: number }) {
   const setWeb = useUiStore((s) => s.setWebSearchEnabled);
   const scholar = useUiStore((s) => s.scholarSearchEnabled);
   const setScholar = useUiStore((s) => s.setScholarSearchEnabled);
+  const mcp = useUiStore((s) => s.mcpEnabled);
+  const setMcp = useUiStore((s) => s.setMcpEnabled);
+  const mcpServers = useMcpServers();
   const t = useT();
   // no key, no button: search that cannot run must not be offerable
   // (the capabilities panel is the one place that says why)
@@ -57,6 +61,17 @@ export default function SearchToggles({ size = 16 }: { size?: number }) {
       >
         <GraduationCap size={size} strokeWidth={1.75} />
       </button>
+      {mcpServers.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setMcp(!mcp)}
+          title={mcp ? t('toolbar.mcp') : t('toolbar.mcpOff')}
+          className={cls(mcp)}
+          data-mcp-toggle
+        >
+          <Wrench size={size} strokeWidth={1.75} />
+        </button>
+      )}
     </>
   );
 }

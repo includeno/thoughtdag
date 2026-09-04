@@ -84,6 +84,8 @@ Many products use nodes and edges, but the graph does a different job in each ca
 
 ThoughtDAG is a user-authored context graph: incoming paths and explicit references form the next request, while excluded work stays visible on the canvas.
 
+Large canvases can switch to a one- or two-level active neighborhood, Tree or Card view, then use independent organization links, project tags, custom types and combined filters. Those navigation relations never enter model context, and durable transactions keep Undo/Redo available after reload.
+
 ## 🗺️ Export the shape of your thinking
 
 The export keeps the nodes, wires and high-level structural counts. Different questions and different ways of exploring them leave visibly different maps.
@@ -144,6 +146,8 @@ Full feature list (60+, grouped by area) → [docs/features.md](docs/features.md
 ### Works beside your coding agent
 
 Automatic folder backup keeps the canvas as a live `.thoughtdag.json` file in your project; Markdown export turns any context chain or selection into a plain `.md`. Coding agents can read either without a plugin, API or server.
+
+The local CLI can operate projects, nodes, edges, materials, organization and import/export after explicit per-command authorization; destructive permissions are disabled by default. See the [CLI guide](docs/cli_ZH.md).
 
 ## Models, cost & privacy
 

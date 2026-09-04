@@ -16,7 +16,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import 'highlight.js/styles/github.css';
-import { BookOpen, Brain, CircleHelp, Download, Drama, Eye, FileText, Frame, GitBranch, Highlighter, ImageDown, KeyRound, LayoutGrid, Loader2, MessageCircleQuestion, MoreHorizontal, Paperclip, Redo2, Scissors, Search, Share2, SquareTerminal, Stethoscope, StickyNote, Trash2, Undo2, Workflow, X, ListRestart, FolderSync, Minimize2, Rewind } from 'lucide-react';
+import { BookOpen, Brain, CircleDot, CircleHelp, Download, Drama, Eye, FileText, Frame, GitBranch, Highlighter, ImageDown, KeyRound, LayoutGrid, ListTree, Loader2, MessageCircleQuestion, MoreHorizontal, PanelsTopLeft, Paperclip, Redo2, Scissors, Search, Share2, SquareTerminal, Stethoscope, StickyNote, Trash2, Undo2, Workflow, X, ListRestart, FolderSync, Minimize2, Rewind } from 'lucide-react';
 import './index.css';
 import ThoughtNode from './components/ThoughtNode';
 import ParadigmNode from './components/ParadigmNode';
@@ -65,7 +65,10 @@ import ShareDialog from './components/ui/ShareDialog';
 import ThoughtMapDialog from './components/ui/ThoughtMapDialog';
 import BackupDialog from './components/ui/BackupDialog';
 import CondenseDialog from './components/ui/CondenseDialog';
+import CliSettingsModal from './components/ui/CliSettingsModal';
+import NodeMetadataDialog from './components/ui/NodeMetadataDialog';
 import { backupSupported } from './lib/local-backup';
+import { bootCliControl, cliControlAvailable } from './lib/cli-control';
 import LangSwitch from './components/ui/LangSwitch';
 import ModelPicker from './components/ui/ModelPicker';
 import RoleTemplateChips from './components/ui/RoleTemplateChips';
@@ -77,6 +80,8 @@ import { useModels } from './lib/use-models';
 import { useZoomTier } from './lib/use-map-mode';
 import { TimelineBar } from './components/ui/TimelineBar';
 import TimelineOverviewModal from './components/ui/TimelineOverviewModal';
+import KnowledgeViews from './components/ui/KnowledgeViews';
+import { knowledgeQueryIsActive, projectKnowledgeQuery, resolveKnowledgeQuery } from './lib/knowledge';
 import { useStore as useRfStore, useReactFlow } from '@xyflow/react';
 
 // One node type key, three renderers: content nodes (notes / files) render
@@ -139,6 +144,9 @@ export default function App() {
 
   // Desktop shell: update prompts render as in-app toasts (no-op on web)
   useEffect(() => { bootDesktopUpdateUI(); }, []);
+  useEffect(() => {
+    if (hydrated && !isViewerMode) bootCliControl();
+  }, [hydrated]);
 
   // A pending Sign-in-with-OpenRouter callback (?code=) resolves here: the
   // exchange runs entirely in the browser, then the ApiKeyModal opens on
@@ -167,6 +175,8 @@ export default function App() {
       <ShareDialog />
       <ThoughtMapDialog />
       <BackupDialog />
+      <CliSettingsModal />
+      <NodeMetadataDialog />
       <ConfirmDialog />
       <Tutorial />
     </>
@@ -174,11 +184,19 @@ export default function App() {
 }
 
 function Canvas() {
-  const { nodes, edges, setNodes, setEdges, addQuestion, undo, redo, addCrossLink, setSelectedNodeId, setSelectedNodeIds, history, historyIndex, relayout } = useStore();
+  const { nodes, edges, organizationRelations, setNodes, setEdges, addQuestion, undo, redo, addCrossLink, setSelectedNodeId, setSelectedNodeIds, history, historyIndex, relayout } = useStore();
   const t = useT();
   const setTutorialOpen = useUiStore((s) => s.setTutorialOpen);
   const annotationsHidden = useUiStore((s) => s.annotationsHidden);
   const setAnnotationsHidden = useUiStore((s) => s.setAnnotationsHidden);
+  const activeNodeId = useUiStore((s) => s.activeNodeId);
+  const canvasView = useUiStore((s) => s.canvasView);
+  const setCanvasView = useUiStore((s) => s.setCanvasView);
+  const localDepth = useUiStore((s) => s.localDepth);
+  const setLocalDepth = useUiStore((s) => s.setLocalDepth);
+  const knowledgeQuery = useUiStore((s) => s.knowledgeQuery);
+  const selectedOrganizationRelationId = useUiStore((s) => s.selectedOrganizationRelationId);
+  const setSelectedOrganizationRelationId = useUiStore((s) => s.setSelectedOrganizationRelationId);
   const [inputValue, setInputValue] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [rootRole, setRootRole] = useState('');
@@ -468,7 +486,7 @@ function Canvas() {
     const meta = useProjects.getState();
     const pname = meta.projects.find((p) => p.id === meta.activeId)?.name ?? 'Paradigm';
     const id = crypto.randomUUID();
-    await idbSet(projectStorageKey(id), JSON.stringify({ state: { nodes: cNodes, edges: cEdges }, version: 1 }));
+    await idbSet(projectStorageKey(id), JSON.stringify({ state: { nodes: cNodes, edges: cEdges }, version: 2 }));
     await adoptImportedProject(id, `▶ ${pname}`, 'chat');
     await markInstantiatedFrom(id, pname); // provenance rides in the backup
     prevNodeCount.current = useStore.getState().nodes.length;
@@ -509,8 +527,23 @@ function Canvas() {
   );
 
   const onEdgesChange: OnEdgesChange = useCallback(
-    (changes) => setEdges(applyEdgeChanges(changes, useStore.getState().edges)),
-    [setEdges]
+    (changes) => {
+      const contextChanges = changes.filter((change) => !('id' in change) || !change.id.startsWith('organization:'));
+      if (contextChanges.length > 0) {
+        setEdges(applyEdgeChanges(contextChanges, useStore.getState().edges));
+        if (contextChanges.some((change) => change.type === 'select' && change.selected)) {
+          setSelectedOrganizationRelationId(null);
+        }
+      }
+      for (const change of changes) {
+        if (!('id' in change) || !change.id.startsWith('organization:')) continue;
+        if (change.type !== 'select') continue;
+        const relationId = change.id.slice('organization:'.length);
+        if (change.selected) setSelectedOrganizationRelationId(relationId);
+        else if (useUiStore.getState().selectedOrganizationRelationId === relationId) setSelectedOrganizationRelationId(null);
+      }
+    },
+    [setEdges, setSelectedOrganizationRelationId]
   );
 
   // Frame drag carries its contents: a frame is a region, so moving the
@@ -519,6 +552,7 @@ function Canvas() {
   // delta from ITS start position, so there is no incremental drift.
   const frameDrag = useRef<{ frameId: string; start: { x: number; y: number }; members: { id: string; start: { x: number; y: number } }[] } | null>(null);
   const onNodeDragStart: OnNodeDrag<ThoughtNodeType> = useCallback((_e, node) => {
+    useStore.getState().pushHistory();
     // unlinked frames (frameCarry === false) move alone — the state while
     // the frame itself is still being adjusted over its nodes
     if (node.data.stepKind !== 'frame' || node.data.frameCarry === false) return;
@@ -552,7 +586,10 @@ function Canvas() {
       }),
     }));
   }, []);
-  const onNodeDragStop: OnNodeDrag<ThoughtNodeType> = useCallback(() => { frameDrag.current = null; }, []);
+  const onNodeDragStop: OnNodeDrag<ThoughtNodeType> = useCallback(() => {
+    frameDrag.current = null;
+    useStore.getState().pushHistory('node.move');
+  }, []);
 
   // Edge right-click context menu
   const [edgeMenu, setEdgeMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
@@ -582,13 +619,19 @@ function Canvas() {
   }, [edgeMenu]);
 
   const deleteEdges = useStore((s) => s.deleteEdges);
+  const deleteOrganizationRelations = useStore((s) => s.deleteOrganizationRelations);
 
   const deleteEdge = useCallback(
     (edgeId: string) => {
-      deleteEdges([edgeId]);
+      if (edgeId.startsWith('organization:')) {
+        deleteOrganizationRelations([edgeId.slice('organization:'.length)]);
+        setSelectedOrganizationRelationId(null);
+      } else {
+        deleteEdges([edgeId]);
+      }
       setEdgeMenu(null);
     },
-    [deleteEdges]
+    [deleteEdges, deleteOrganizationRelations, setSelectedOrganizationRelationId]
   );
 
   const onConnect: OnConnect = useCallback(
@@ -729,7 +772,9 @@ function Canvas() {
       if (e.key === 'Escape') {
         const target = e.target as HTMLElement;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
-        if (selectedNodeIds.length > 1) {
+        if (selectedOrganizationRelationId) {
+          setSelectedOrganizationRelationId(null);
+        } else if (selectedNodeIds.length > 1) {
           setSelectedNodeIds([]);
         } else if (selectedNodeId) {
           setSelectedNodeId(null);
@@ -753,13 +798,17 @@ function Canvas() {
           if (selectedEdgeIds.length > 0) {
             e.preventDefault();
             deleteEdges(selectedEdgeIds);
+          } else if (selectedOrganizationRelationId) {
+            e.preventDefault();
+            deleteOrganizationRelations([selectedOrganizationRelationId]);
+            setSelectedOrganizationRelationId(null);
           }
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [undo, redo, selectedNodeId, selectedNodeIds, setSelectedNodeId, setSelectedNodeIds, batchDelete, edges, deleteEdges, isParadigm, centerNode]);
+  }, [undo, redo, selectedNodeId, selectedNodeIds, selectedOrganizationRelationId, setSelectedNodeId, setSelectedNodeIds, setSelectedOrganizationRelationId, batchDelete, edges, deleteEdges, deleteOrganizationRelations, isParadigm, centerNode]);
 
   const handleSubmit = () => {
     if (!inputValue.trim()) return;
@@ -791,7 +840,11 @@ function Canvas() {
   const onSelectionChange = useCallback(({ nodes: selectedNodes }: { nodes: { id: string }[] }) => {
     const ids = selectedNodes.map((n) => n.id);
     if (ids.length > 1) {
-      setSelectedNodeIds(ids);
+      const previous = useStore.getState().selectedNodeIds;
+      const selected = new Set(ids);
+      const retained = previous.filter((id) => selected.has(id));
+      const added = ids.filter((id) => !retained.includes(id));
+      setSelectedNodeIds([...retained, ...added]);
     } else if (ids.length === 1) {
       setSelectedNodeId(ids[0]);
     }
@@ -817,7 +870,7 @@ function Canvas() {
   // dragged wide.
   const [moreOpen, setMoreOpen] = useState(false);
   const [diagPing, setDiagPing] = useState(0);
-  const searching = useUiStore((s2) => s2.searchHitIds !== null);
+  const searching = knowledgeQueryIsActive(knowledgeQuery);
   const moreRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!moreOpen) return;
@@ -831,7 +884,32 @@ function Canvas() {
   // Annotation view mode: hide frames + UNLINKED content nodes (linked
   // material stays — it's part of the reasoning record). A filter over the
   // render, not a layer system: the semantic layering already lives in edges.
-  const searchHitIds = useUiStore((s2) => s2.searchHitIds);
+  const effectiveKnowledgeQuery = useMemo(
+    () => resolveKnowledgeQuery(knowledgeQuery, activeNodeId),
+    [knowledgeQuery, activeNodeId],
+  );
+  const knowledgeProjection = useMemo(() => {
+    try {
+      return projectKnowledgeQuery(
+        { nodes, edges, organizationRelations },
+        effectiveKnowledgeQuery,
+        { activeNodeId, localDepth },
+      );
+    } catch {
+      return {
+        candidateNodeIds: [], matchedNodeIds: [], visibleNodeIds: [], hits: [],
+        activeOutsideFilter: false, neighborhood: null,
+      };
+    }
+  }, [nodes, edges, organizationRelations, effectiveKnowledgeQuery, activeNodeId, localDepth]);
+  const matchedKnowledgeNodeIds = useMemo(
+    () => new Set(knowledgeProjection.matchedNodeIds),
+    [knowledgeProjection.matchedNodeIds],
+  );
+  const localKnowledgeNodeIds = useMemo(
+    () => localDepth > 0 ? new Set(knowledgeProjection.candidateNodeIds) : null,
+    [knowledgeProjection.candidateNodeIds, localDepth],
+  );
   // Context Focus: single-selection lights up what the node actually
   // receives (mainline + materials + reference sources, via the same
   // partitionContext the prompt builder uses) and dims the rest. Read-only.
@@ -857,6 +935,9 @@ function Canvas() {
 
   const displayNodes = useMemo((): typeof nodes => {
     let out = nodes;
+    if (localKnowledgeNodeIds) {
+      out = out.map((node) => localKnowledgeNodeIds.has(node.id) ? node : { ...node, hidden: true });
+    }
     if (annotationsHidden) {
       out = out.map((n) => {
         const k = n.data.stepKind;
@@ -865,11 +946,13 @@ function Canvas() {
       });
     }
     // The searchlight: hits stay lit, everything else dims (CSS does the
-    // dimming via [data-searching]; frames stay out — they are the ground).
-    if (searchHitIds !== null) {
+    // dimming via [data-searching]).
+    if (searching) {
       out = out.map((n) => (
-        searchHitIds.has(n.id) || n.data.stepKind === 'frame'
+        matchedKnowledgeNodeIds.has(n.id)
           ? { ...n, className: 'search-hit' }
+          : knowledgeProjection.activeOutsideFilter && n.id === activeNodeId
+            ? { ...n, className: 'filter-anchor' }
           : n.className === 'search-hit' ? { ...n, className: undefined } : n
       ));
     }
@@ -888,7 +971,7 @@ function Canvas() {
       });
     }
     return out;
-  }, [nodes, edges, annotationsHidden, searchHitIds, focusSets, selectedNodeId]);
+  }, [nodes, edges, annotationsHidden, searching, matchedKnowledgeNodeIds, knowledgeProjection.activeOutsideFilter, activeNodeId, focusSets, selectedNodeId, localKnowledgeNodeIds]);
 
   const highlightedEdges = useMemo((): ThoughtEdge[] => {
     // Visual law: SOLID = structural (conversation, layout, cascade),
@@ -965,6 +1048,54 @@ function Canvas() {
       };
     });
   }, [nodes, edges, selectedNodeIds, themePalette, focusSets]);
+
+  // Organization relations are projected into React Flow only at render
+  // time. They never enter `edges`, so prompt traversal, layout, staleness,
+  // cascades and edge conversion cannot mistake navigation for context.
+  const organizationEdges = useMemo((): ThoughtEdge[] => {
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    return organizationRelations.flatMap((relation) => {
+      const source = nodeById.get(relation.sourceId);
+      const target = nodeById.get(relation.targetId);
+      if (!source || !target || source.data.stepKind === 'frame' || target.data.stepKind === 'frame') return [];
+      if (localKnowledgeNodeIds && (!localKnowledgeNodeIds.has(source.id) || !localKnowledgeNodeIds.has(target.id))) return [];
+      const targetIsContent = isContentKind(target.data.stepKind);
+      const isJump = relation.kind === 'jump';
+      const selected = selectedOrganizationRelationId === relation.id;
+      const searchDimmed = searching && (!matchedKnowledgeNodeIds.has(source.id) || !matchedKnowledgeNodeIds.has(target.id));
+      const stroke = isJump ? '#B45309' : '#0F766E';
+      return [{
+        id: `organization:${relation.id}`,
+        source: source.id,
+        target: target.id,
+        sourceHandle: isJump ? 'branch' : 'continue',
+        targetHandle: targetIsContent ? (isJump ? 'org-left' : 'org-top') : (isJump ? 'left' : 'top'),
+        type: 'smoothstep',
+        animated: false,
+        selected,
+        interactionWidth: 18,
+        style: {
+          stroke,
+          strokeWidth: selected ? 3 : 1.8,
+          strokeDasharray: isJump ? '2 7' : '5 5',
+          opacity: searchDimmed ? 0.18 : 0.82,
+        },
+        markerEnd: { type: 'arrowclosed' as const, color: stroke, width: 15, height: 15 },
+        data: {
+          isOrganization: true,
+          organizationKind: relation.kind,
+          organizationRelationId: relation.id,
+        },
+      } satisfies ThoughtEdge];
+    });
+  }, [nodes, organizationRelations, selectedOrganizationRelationId, localKnowledgeNodeIds, searching, matchedKnowledgeNodeIds]);
+
+  const displayEdges = useMemo(() => {
+    const contextEdges = localKnowledgeNodeIds
+      ? highlightedEdges.filter((edge) => localKnowledgeNodeIds.has(edge.source) && localKnowledgeNodeIds.has(edge.target))
+      : highlightedEdges;
+    return [...contextEdges, ...organizationEdges];
+  }, [highlightedEdges, organizationEdges, localKnowledgeNodeIds]);
 
   // The panel is an overlay — the canvas never resizes. When it opens (or
   // the selection moves while it is open) and the selected node would be
@@ -1058,7 +1189,7 @@ function Canvas() {
           if (import.meta.env.DEV) (window as unknown as { __rf?: typeof instance }).__rf = instance;
         }}
         nodes={displayNodes}
-        edges={highlightedEdges}
+        edges={displayEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeDragStart={onNodeDragStart}
@@ -1101,7 +1232,7 @@ function Canvas() {
         zoomOnDoubleClick={false}
         connectionLineStyle={{ stroke: themePalette.accent, strokeDasharray: '8 4', strokeWidth: 2 }}
         onSelectionChange={onSelectionChange}
-        onPaneClick={() => { setSelectedNodeId(null); setSelectedNodeIds([]); setNodeMenu(null); }}
+        onPaneClick={() => { setSelectedNodeId(null); setSelectedNodeIds([]); setSelectedOrganizationRelationId(null); setNodeMenu(null); }}
       >
         {paperTexture === 'grid' ? (
           <>
@@ -1135,6 +1266,15 @@ function Canvas() {
           position="bottom-right"
         />}
       </ReactFlow>
+      <KnowledgeViews onSearch={() => setSearchOpen(true)} onLocate={(id) => {
+        const node = useStore.getState().nodes.find((item) => item.id === id);
+        if (!node) return;
+        setSelectedNodeId(id);
+        useUiStore.getState().setActiveNodeId(id);
+        centerNode(node, { zoom: 1 });
+        if (isContentKind(node.data.stepKind)) useUiStore.getState().setReaderNodeId(id);
+        else useUiStore.getState().setPanelOpen(true);
+      }} />
 
       {/* Initial input */}
       {!hasNodes && isParadigm && (
@@ -1592,6 +1732,50 @@ function Canvas() {
           </div>
         )}
         {hasNodes && (
+          <div className="h-8 flex items-center bg-card/90 backdrop-blur border border-line rounded-lg shadow-sm overflow-hidden" data-knowledge-view-switcher>
+            {([
+              ['canvas', Workflow, 'knowledge.viewCanvas'],
+              ['tree', ListTree, 'knowledge.viewTree'],
+              ['card', PanelsTopLeft, 'knowledge.viewCard'],
+            ] as const).map(([view, Icon, label]) => (
+              <button
+                key={view}
+                onClick={() => setCanvasView(view)}
+                title={t(label)}
+                className={`w-8 h-8 flex items-center justify-center transition-colors ${canvasView === view ? 'bg-accent/10 text-accent' : 'text-ink-faint hover:bg-wash hover:text-ink'}`}
+                data-knowledge-view={view}
+              >
+                <Icon size={14} strokeWidth={1.75} />
+              </button>
+            ))}
+          </div>
+        )}
+        {hasNodes && canvasView === 'canvas' && (
+          <div className="h-8 flex items-center bg-card/90 backdrop-blur border border-line rounded-lg shadow-sm overflow-hidden" data-local-depth>
+            {([0, 1, 2] as const).map((depth) => (
+              <button
+                key={depth}
+                onClick={() => {
+                  if (depth > 0 && !activeNodeId) {
+                    toast('info', ti('knowledge.localNeedsActive'));
+                    return;
+                  }
+                  setLocalDepth(depth);
+                }}
+                title={t(depth === 0 ? 'knowledge.localOff' : depth === 1 ? 'knowledge.localOne' : 'knowledge.localTwo')}
+                className={`min-w-7 h-8 px-1.5 flex items-center justify-center gap-0.5 text-2xs transition-colors ${localDepth === depth ? 'bg-accent/10 text-accent font-semibold' : 'text-ink-faint hover:bg-wash hover:text-ink'}`}
+              >
+                {depth === 0 ? <CircleDot size={13} strokeWidth={1.75} /> : depth}
+              </button>
+            ))}
+          </div>
+        )}
+        {hasNodes && canvasView === 'canvas' && knowledgeProjection.activeOutsideFilter && (
+          <span className="h-8 flex items-center rounded-lg border border-warm/30 bg-warm/10 px-2 text-2xs text-warm shadow-sm" data-active-outside-filter>
+            {t('search.activeOutsideFilter')}
+          </span>
+        )}
+        {hasNodes && (
           <button
             onClick={() => setSearchOpen(true)}
             className="bg-card/90 backdrop-blur border border-line rounded-lg w-8 h-8 flex items-center justify-center shadow-sm hover:bg-wash transition-colors text-ink-faint hover:text-accent"
@@ -1648,6 +1832,15 @@ function Canvas() {
           </button>
           {moreOpen && (
             <div className="absolute right-0 top-full mt-1.5 bg-card border border-line rounded-xl shadow-lg py-1 w-[220px] z-30 animate-fade-in">
+              {cliControlAvailable() && (
+                <button
+                  onClick={() => { setMoreOpen(false); useUiStore.getState().setCliSettingsOpen(true); }}
+                  className="w-full text-left px-3 py-2 text-xs text-ink hover:bg-wash transition-colors flex items-center gap-2.5"
+                  data-cli-settings-entry
+                >
+                  <SquareTerminal size={14} strokeWidth={1.75} className="text-ink-faint shrink-0" /> {t('cli.menu')}
+                </button>
+              )}
               {hasNodes && (
                 <button
                   onClick={() => { setMoreOpen(false); setAnnotationsHidden(!annotationsHidden); }}
@@ -1721,8 +1914,8 @@ function Canvas() {
                   onClick={() => {
                     setMoreOpen(false);
                     void (async () => {
-                      const { nodes: ns, edges: es } = useStore.getState();
-                      const url = await buildViewerLink(ns, es);
+                      const { nodes: ns, edges: es, organizationRelations: relations, taxonomy: projectTaxonomy } = useStore.getState();
+                      const url = await buildViewerLink(ns, es, relations, projectTaxonomy);
                       await navigator.clipboard.writeText(url).catch(() => {});
                       useUiStore.getState().setShareDialogUrl(url);
                     })();
@@ -1829,8 +2022,12 @@ function Canvas() {
         onLocate={(id) => {
           const n = useStore.getState().nodes.find((x) => x.id === id);
           if (n) {
+            setCanvasView('canvas');
             setSelectedNodeId(id);
+            useUiStore.getState().setActiveNodeId(id);
             centerNode(n, { zoom: 1 });
+            if (isContentKind(n.data.stepKind)) useUiStore.getState().setReaderNodeId(id);
+            else useUiStore.getState().setPanelOpen(true);
           }
           // search stays open: the filter is a browsing mode, Esc ends it
         }}

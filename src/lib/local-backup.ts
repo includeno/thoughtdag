@@ -1,11 +1,13 @@
 import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
-import { useStore, stripTransient } from '../store';
-import { useProjects } from '../store/projects';
+import { flushPendingTransaction, useStore, stripTransient } from '../store';
+import { useProjects, type ProjectMeta } from '../store/projects';
 import { toast, useUiStore } from './ui-store';
 import { t } from '../i18n';
-import { EXPORT_FORMAT_VERSION, activeProjectName } from './export';
+import { EXPORT_FORMAT_VERSION } from './export';
 import { isViewerMode } from './viewer';
-import { inlineVaultedContent } from './attachment-vault';
+import { inlineVaultedContent, inlineVaultedTransactions } from './attachment-vault';
+import type { CanvasEvent, OrganizationRelation, ThoughtEdge, ThoughtNode } from '../types';
+import type { CanvasTransaction, ProjectTaxonomy, StoreState } from '../store/types';
 
 // Automatic local backup via the File System Access API (Chromium): the user
 // grants a FOLDER once; afterwards every canvas change is debounced and the
@@ -28,6 +30,96 @@ let handle: DirHandle | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let dirty = false;
 
+type BackupRelevantState = Pick<
+  StoreState,
+  | 'nodes'
+  | 'edges'
+  | 'events'
+  | 'organizationRelations'
+  | 'taxonomy'
+  | 'transactions'
+  | 'undoableTransactionIds'
+  | 'redoableTransactionIds'
+  | 'revision'
+>;
+
+export function backupRelevantStateChanged(state: BackupRelevantState, previous: BackupRelevantState): boolean {
+  return state.nodes !== previous.nodes
+    || state.edges !== previous.edges
+    || state.events !== previous.events
+    || state.organizationRelations !== previous.organizationRelations
+    || state.taxonomy !== previous.taxonomy
+    || state.transactions !== previous.transactions
+    || state.undoableTransactionIds !== previous.undoableTransactionIds
+    || state.redoableTransactionIds !== previous.redoableTransactionIds
+    || state.revision !== previous.revision;
+}
+
+export interface ProjectBackupPayloadV2 {
+  schemaVersion: typeof EXPORT_FORMAT_VERSION;
+  version: typeof EXPORT_FORMAT_VERSION;
+  name: string;
+  exportedAt: string;
+  instantiatedFrom?: ProjectMeta['instantiatedFrom'];
+  nodes: ThoughtNode[];
+  edges: ThoughtEdge[];
+  events: CanvasEvent[];
+  organizationRelations: OrganizationRelation[];
+  taxonomy: ProjectTaxonomy;
+  transactions: CanvasTransaction[];
+  undoableTransactionIds: string[];
+  redoableTransactionIds: string[];
+  revision: number;
+}
+
+/** Build the same complete v2 recovery envelope used by explicit exports.
+    Vaulted binaries in both the live graph and retained transaction history
+    are inlined so the file never depends on this browser's IndexedDB. */
+export async function buildActiveProjectBackupPayload(): Promise<ProjectBackupPayloadV2 | null> {
+  // A legacy/pre-only mutation may still be waiting for the transaction
+  // safety net. Commit it before taking a recovery snapshot; an in-flight
+  // generation/extraction is not a coherent backup boundary, so retry later.
+  if (!flushPendingTransaction('backup.pending')) return null;
+
+  const {
+    nodes: rawNodes,
+    edges,
+    events,
+    organizationRelations,
+    taxonomy,
+    transactions: rawTransactions,
+    undoableTransactionIds,
+    redoableTransactionIds,
+    revision,
+  } = useStore.getState();
+  if (rawNodes.length === 0) return null;
+
+  const { projects, activeId } = useProjects.getState();
+  const project = projects.find((candidate) => candidate.id === activeId);
+  const name = project?.name ?? 'canvas';
+  const [nodes, transactions] = await Promise.all([
+    inlineVaultedContent(rawNodes),
+    inlineVaultedTransactions(rawTransactions),
+  ]);
+
+  return {
+    schemaVersion: EXPORT_FORMAT_VERSION,
+    version: EXPORT_FORMAT_VERSION,
+    name,
+    exportedAt: new Date().toISOString(),
+    ...(project?.instantiatedFrom ? { instantiatedFrom: project.instantiatedFrom } : {}),
+    nodes: stripTransient(nodes),
+    edges,
+    events,
+    organizationRelations,
+    taxonomy,
+    transactions,
+    undoableTransactionIds,
+    redoableTransactionIds,
+    revision,
+  };
+}
+
 /** Write the ACTIVE canvas as one real file. Both paths go through here —
     the debounced auto-backup and the dialog's "back up now" button back up
     the current canvas only; other canvases get their file whenever they
@@ -35,27 +127,18 @@ let dirty = false;
     was (no folder yet / empty canvas). */
 export async function backupActiveProject(): Promise<string | null> {
   if (!handle) return null;
-  const { nodes: rawNodes, edges, events } = useStore.getState();
-  if (rawNodes.length === 0) return null;
-  const nodes = await inlineVaultedContent(rawNodes);
-  const { projects, activeId } = useProjects.getState();
-  const name = activeProjectName().replace(/[\\/:*?"<>|]/g, '_') || 'canvas';
-  const payload = JSON.stringify({
-    version: EXPORT_FORMAT_VERSION,
-    name: activeProjectName(),
-    exportedAt: new Date().toISOString(),
-    instantiatedFrom: projects.find((p) => p.id === activeId)?.instantiatedFrom,
-    nodes: stripTransient(nodes),
-    edges,
-    events,
-  });
+  const backup = await buildActiveProjectBackupPayload();
+  if (!backup) return null;
+  const projectName = String(backup.name);
+  const name = projectName.replace(/[\\/:*?"<>|]/g, '_') || 'canvas';
+  const payload = JSON.stringify(backup);
   const file = await handle.getFileHandle(`${name}.thoughtdag.json`, { create: true });
   const w = await file.createWritable();
   await w.write(payload);
   await w.close();
   localStorage.setItem('thoughtdag.lastBackupAt', String(Date.now()));
   useUiStore.getState().setLastAutoBackupAt(Date.now());
-  return activeProjectName();
+  return projectName;
 }
 
 function schedule(): void {
@@ -72,7 +155,15 @@ function schedule(): void {
 
 function watch(): void {
   useStore.subscribe((state, prev) => {
-    if (state.nodes !== prev.nodes || state.edges !== prev.edges) schedule();
+    if (backupRelevantStateChanged(state, prev)) schedule();
+  });
+  useProjects.subscribe((state, previous) => {
+    const project = state.projects.find((candidate) => candidate.id === state.activeId);
+    const oldProject = previous.projects.find((candidate) => candidate.id === previous.activeId);
+    if (state.activeId !== previous.activeId
+      || project?.name !== oldProject?.name
+      || project?.instantiatedFrom?.name !== oldProject?.instantiatedFrom?.name
+      || project?.instantiatedFrom?.at !== oldProject?.instantiatedFrom?.at) schedule();
   });
 }
 
