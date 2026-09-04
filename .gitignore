@@ -49,3 +49,5 @@ docs/.vitepress/cache/
 # report live). In-capture run dirs join as they complete.
 # npm pack output (the publish workflow packs in CI)
 dsh/*.tgz
+
+.idea
