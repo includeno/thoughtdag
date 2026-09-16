@@ -1,3 +1,4 @@
+import { responseVersions, withResponseVersions, editResponseVersion } from '../../lib/response-versions';
 import type { StateCreator } from 'zustand';
 import type { ThoughtNode, ThoughtEdge } from '../../types';
 import { generateId, countTokens } from '../../utils';
@@ -9,6 +10,7 @@ import { pruneHighlights } from '../../lib/highlight-match';
 import { toast, useUiStore } from '../../lib/ui-store';
 import { t, fmt } from '../../i18n';
 import type { StoreState, NodeSlice } from '../types';
+import { editModePatch, nodeEditMode } from '../../lib/edit-mode';
 import { condenseGuard } from '../../lib/condense-guard';
 
 export const createNodeSlice: StateCreator<StoreState, [], [], NodeSlice> = (set, get) => ({
@@ -70,14 +72,7 @@ export const createNodeSlice: StateCreator<StoreState, [], [], NodeSlice> = (set
           ? {
               ...n,
               data: {
-                ...n.data,
-                response,
-                responses: n.data.responses.map((r, i) => (i === n.data.responseIndex ? response : r)),
-                // a hand-edited answer invalidates its auto summary
-                summaries: n.data.summaries?.map((s, i) => (i === n.data.responseIndex ? undefined : s)),
-                summaryTypes: n.data.summaryTypes?.map((s, i) => (i === n.data.responseIndex ? undefined : s)),
-                // timeline: the human revised this version (generation stamp stays)
-                editedAts: n.data.responses.map((_, i) => (i === n.data.responseIndex ? new Date().toISOString() : n.data.editedAts?.[i])),
+                ...editResponseVersion(n.data, response),
                 highlights: pruneHighlights(n.data.highlights, response),
                 isEditingResponse: false,
                 tokenCount,
@@ -114,6 +109,21 @@ export const createNodeSlice: StateCreator<StoreState, [], [], NodeSlice> = (set
         return n;
       }),
     }));
+  },
+
+  setNodeEditMode: (nodeId, mode) => {
+    const node = get().nodes.find((n) => n.id === nodeId);
+    if (!node || node.data.isLoading || condenseGuard()
+      || (mode !== 'manual' && mode !== 'manual-detail' && mode !== 'ai')
+      || (node.data.stepKind && node.data.stepKind !== 'note')) return;
+    const current = nodeEditMode(node.data);
+    if (current === mode) return;
+    get().pushHistory();
+    set((state) => ({ nodes: state.nodes.map((n) => n.id === nodeId ? {
+      ...n,
+      data: { ...n.data, ...editModePatch(n.data, mode), isEditing: true, isCollapsed: false },
+    } : n) }));
+    get().pushHistory('node.edit-mode');
   },
 
   setEditing: (nodeId: string, editing: boolean) => {
@@ -263,7 +273,7 @@ export const createNodeSlice: StateCreator<StoreState, [], [], NodeSlice> = (set
     const { nodes, edges } = get();
     const stale: string[] = [];
     for (const n of nodes) {
-      if (!n.data.lastContextHash || !n.data.response) continue;
+      if (!n.data.lastContextHash || !n.data.response || (n.data.editMode ?? 'ai') !== 'ai') continue;
       if (['note', 'file', 'link', 'frame'].includes(n.data.stepKind ?? '')) continue;
       if (upstreamFingerprint(n.id, nodes, edges) !== n.data.lastContextHash) stale.push(n.id);
     }
@@ -338,16 +348,12 @@ export const createNodeSlice: StateCreator<StoreState, [], [], NodeSlice> = (set
     set((state) => ({
       nodes: state.nodes.map((n) => {
         if (n.id !== nodeId) return n;
-        const { responses, responseIndex } = n.data;
-        let newIndex = direction === 'prev' ? responseIndex - 1 : responseIndex + 1;
-        if (newIndex < 0) newIndex = responses.length - 1;
-        if (newIndex >= responses.length) newIndex = 0;
-        return {
-          ...n,
-          // navigating away from a failed placeholder reclaims the older answer;
-          // the question mirrors its version's wording (a version is a PAIR)
-          data: { ...n.data, responseIndex: newIndex, response: responses[newIndex], question: n.data.questions?.[newIndex] ?? n.data.question, generationFailed: undefined, highlights: pruneHighlights(n.data.highlights, responses[newIndex]) },
-        };
+        const versions = responseVersions(n.data);
+        if (!versions.length || n.data.isLoading) return n;
+        const newIndex = (n.data.responseIndex + (direction === 'prev' ? -1 : 1) + versions.length) % versions.length;
+        return { ...n, data: { ...withResponseVersions(n.data, versions, newIndex), generationFailed: undefined,
+          highlights: pruneHighlights(n.data.highlights, versions[newIndex].response) } };
+
       }),
     }));
   },
@@ -357,27 +363,13 @@ export const createNodeSlice: StateCreator<StoreState, [], [], NodeSlice> = (set
     set((state) => ({
       nodes: state.nodes.map((n) => {
         if (n.id !== nodeId) return n;
-        const newResponses = n.data.responses.filter((_, i) => i !== versionIndex);
-        if (newResponses.length === 0) return n; // Don't delete last version
-        const newIndex = Math.min(n.data.responseIndex, newResponses.length - 1);
-        return {
-          ...n,
-          data: {
-            ...n.data,
-            responses: newResponses,
-            responseIndex: newIndex,
-            response: newResponses[newIndex],
-            questions: n.data.questions?.filter((_, i) => i !== versionIndex),
-            question: n.data.questions?.filter((_, i) => i !== versionIndex)[newIndex] ?? n.data.question,
-            summaries: n.data.summaries?.filter((_, i) => i !== versionIndex),
-            generatedBy: n.data.generatedBy?.filter((_, i) => i !== versionIndex),
-            summaryTypes: n.data.summaryTypes?.filter((_, i) => i !== versionIndex),
-            reasonings: n.data.reasonings?.filter((_, i) => i !== versionIndex),
-            generatedAts: n.data.generatedAts?.filter((_, i) => i !== versionIndex),
-            editedAts: n.data.editedAts?.filter((_, i) => i !== versionIndex),
-            highlights: pruneHighlights(n.data.highlights, newResponses[newIndex]),
-          },
-        };
+        const versions = responseVersions(n.data);
+        if (n.data.isLoading || versions.length <= 1 || !Number.isInteger(versionIndex) || versionIndex < 0 || versionIndex >= versions.length) return n;
+        const remaining = versions.filter((_, i) => i !== versionIndex);
+        const newIndex = n.data.responseIndex > versionIndex ? n.data.responseIndex - 1 : Math.min(n.data.responseIndex, remaining.length - 1);
+        return { ...n, data: { ...withResponseVersions(n.data, remaining, newIndex),
+          highlights: pruneHighlights(n.data.highlights, remaining[newIndex].response) } };
+
       }),
     }));
     get().pushHistory();

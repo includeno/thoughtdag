@@ -1,3 +1,4 @@
+import { responseVersions, editResponseVersion, hasValidResponseVersions } from './response-versions';
 import { set as idbSet } from 'idb-keyval';
 import { flushPendingTransaction, useStore, stripTransient } from '../store';
 import {
@@ -35,6 +36,7 @@ import { walkUpAncestors } from './graph';
 import { pruneHighlights } from './highlight-match';
 import { checkOrganizationRelation, findParentCycles } from './knowledge';
 import { parseCanvasEvents, parseTransactionLedger, validateTransactionHistory } from './transaction-import';
+import { editModePatch, hasValidEditMode, nodeEditMode } from './edit-mode';
 
 type CliArgs = Record<string, unknown>;
 const CLI_NODE_KINDS = new Set(['ask', 'note', 'file', 'link', 'frame', 'human', 'prompt']);
@@ -221,6 +223,12 @@ async function createNode(args: CliArgs): Promise<Record<string, unknown>> {
       },
     };
   }
+  if ('editMode' in args || kind === 'ask' || kind === 'note') {
+    node.data = { ...node.data, ...editModePatch(node.data, 'editMode' in args ? args.editMode : 'manual') };
+    if (kind === 'note' && 'response' in args) {
+      Object.assign(node.data, baseData(question, response));
+    }
+  }
   const parentId = optionalText(args.parentId);
   let edges = state.edges;
   if (parentId) {
@@ -278,38 +286,18 @@ function updateNode(args: CliArgs): Record<string, unknown> {
     'frameColor', 'frameCarry', 'webSearch', 'scholarSearch', 'autoRerun', 'autoRerunRounds',
     'highlightMode', 'linkUrl', 'linkTitle',
   ];
-  const dataPatch: Partial<ThoughtData> = {};
+  const dataPatch: Partial<ThoughtData> = 'editMode' in rawPatch ? editModePatch(current.data, rawPatch.editMode) : {};
   for (const key of allowed) {
     if (key in rawPatch) Object.assign(dataPatch, { [key]: rawPatch[key] });
   }
-  if ('response' in rawPatch) {
-    const response = String(rawPatch.response ?? '');
-    const responses = [...current.data.responses];
-    let responseIndex = current.data.responseIndex;
-    if (responseIndex >= 0) responses[responseIndex] = response;
-    else { responses.push(response); responseIndex = 0; }
-    const editedAts = [...(current.data.editedAts ?? [])];
-    editedAts[responseIndex] = new Date().toISOString();
-    const summaries = [...(current.data.summaries ?? [])];
-    const summaryTypes = [...(current.data.summaryTypes ?? [])];
-    const summaryTopics = [...(current.data.summaryTopics ?? [])];
-    summaries[responseIndex] = undefined;
-    summaryTypes[responseIndex] = undefined;
-    summaryTopics[responseIndex] = undefined;
-    Object.assign(dataPatch, {
-      response, responses, responseIndex, editedAts, summaries, summaryTypes, summaryTopics,
-      highlights: pruneHighlights(current.data.highlights, response),
-    });
-  }
   if ('question' in dataPatch) {
     dataPatch.askedAt = new Date().toISOString();
-    if (current.data.responses.length > 0 && dataPatch.question !== current.data.question) {
-      const questions = current.data.responses.map((_, index) => current.data.questions?.[index] ?? current.data.question);
-      if ('response' in rawPatch && (dataPatch.responseIndex ?? -1) >= 0) {
-        questions[dataPatch.responseIndex!] = String(dataPatch.question);
-      }
-      dataPatch.questions = questions;
-    }
+    dataPatch.responseVersions = responseVersions(current.data);
+    dataPatch.questions = dataPatch.responseVersions.map(v => v.question);
+  }
+  if ('response' in rawPatch) {
+    Object.assign(dataPatch, editResponseVersion({ ...current.data, ...dataPatch }, String(rawPatch.response)));
+    dataPatch.highlights = pruneHighlights(current.data.highlights, String(rawPatch.response));
   }
   if ('question' in dataPatch || 'response' in dataPatch) {
     dataPatch.tokenCount = countTokens(String(dataPatch.question ?? current.data.question) + String(dataPatch.response ?? current.data.response));
@@ -332,6 +320,7 @@ function compactNode(node: ThoughtNode) {
   return {
     id: node.id,
     kind: node.data.stepKind ?? 'ask',
+    editMode: nodeEditMode(node.data),
     question: node.data.question,
     response: node.data.response,
     position: node.position,
@@ -369,6 +358,8 @@ function normalizeImportedNode(value: unknown, name: string): ThoughtNode {
   if (value.data.customTypeId !== undefined && !isNonEmptyString(value.data.customTypeId)) {
     throw new Error(`${name} ${value.id} has an invalid customTypeId`);
   }
+  if (!hasValidResponseVersions(value.data)) throw new Error(`${name} ${value.id} has invalid response versions`);
+  if (!hasValidEditMode(value.data)) throw new Error(`${name} ${value.id} has an invalid editMode`);
   const tagIds = Array.isArray(value.data.tagIds) ? [...new Set(value.data.tagIds)] : [];
   return {
     ...(value as unknown as ThoughtNode),
@@ -577,21 +568,22 @@ export function parseCliProjectImport(args: CliArgs): ParsedCliProjectImport {
     };
   }
 
-  const ledger = parseTransactionLedger(args, {
+  const validators = {
     node: normalizeImportedNode,
     edge: validateImportedEdge,
     organizationRelation: validateOrganizationRelation,
-    taxonomy: (value, name) => {
+    taxonomy: (value: unknown, name: string) => {
       if (value === undefined) throw new Error(`${name} is invalid`);
       return parseTaxonomy(value);
     },
-  });
+  };
+  const ledger = parseTransactionLedger(args, validators);
   validateTransactionHistory(ledger.transactions, {
     nodes: graph.nodes,
     edges: graph.edges,
     organizationRelations,
     taxonomy,
-  });
+  }, validators);
   return {
     ...base,
     events: parseCanvasEvents(args.events),
@@ -847,6 +839,7 @@ export async function executeCliCommand(
       return { id: node.id, mode: args.mode };
     }
     case 'question.ask': {
+      if ('editMode' in args && args.editMode !== 'ai') throw new Error('question.ask requires ai editMode; use node.create for manual content');
       const parentId = optionalText(args.parentId);
       if (parentId) nodeById(parentId);
       const before = new Set(state().nodes.map((node) => node.id));
@@ -870,6 +863,12 @@ export async function executeCliCommand(
     }
     case 'node.regenerate': {
       const node = nodeById(args.nodeId);
+      if (nodeEditMode(node.data) === 'manual' || nodeEditMode(node.data) === 'manual-detail') {
+        throw new Error('Switch editMode to ai before regenerating this node');
+      }
+      if (['file', 'link', 'frame'].includes(node.data.stepKind ?? '')) throw new Error('This node kind cannot regenerate');
+      if (node.data.isLoading) throw new Error('Node is already generating');
+      if (!node.data.question.trim()) throw new Error('question is required for generation');
       execution?.setCancelHandler(() => state().stopGeneration(node.id));
       await state().rerunNode(node.id);
       const finished = nodeById(node.id);

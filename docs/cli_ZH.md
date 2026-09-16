@@ -88,6 +88,16 @@ npm run cli -- node.create --json '{"kind":"frame","question":"第一章","width
 
 `kind` 支持 `ask`、`note`、`file`、`link`、`frame`、`human`、`prompt`。创建 `link` 时传入 `url`，页面会抓取并保存网页快照。
 
+普通节点新建默认使用「自由记录」。`editMode` 支持 `manual`（自由记录，仅显示主题）、`manual-detail`（结构笔记，主题与正文由用户填写）、`ai`（智能问答）。旧数据没有此字段时保留原有 AI 行为；便签可切换为结构笔记或智能问答。文件、链接、Frame 和范式步骤保留各自的用途。
+
+```bash
+npm run cli -- node.create --json '{"editMode":"manual-detail","question":"核心结论","response":"具体内容"}'
+npm run cli -- node.update --json '{"nodeId":"node-id","patch":{"editMode":"ai"}}'
+npm run cli -- node.regenerate --json '{"nodeId":"node-id"}'
+```
+
+创建和切换模式都不会调用模型；切换保留正文、历史版本、附件和分类，并支持撤销。需要生成时使用 `question.ask`（新建智能问答）或 `node.regenerate`（生成当前智能问答）；手动模式调用重新生成会明确报错。生成过程中需先停止，才能切换模式。`node.list` 返回有效的 `editMode`，JSON 导入导出保留该字段。
+
 更新、移动、归档节点：
 
 ```bash

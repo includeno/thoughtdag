@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { AppWindow, Archive, ArrowDownUp, Link2, Folder, FolderOpen, Loader2, Plug, RefreshCw, RotateCcw, Search, Square, SquareCheckBig, SquareTerminal, Import, Trash2, X, Inbox } from 'lucide-react';
 import { scanSessions, groupByCwd, disabledRoots, setRootDisabled, type SessionCard, type AtlasGroup } from '../lib/atlas/discover';
 import { diffAgainstWatermark, markSeen, markAllSeen, changeKeyOf, type CardChange } from '../lib/atlas/watermark';
-import { useProjects, switchProject, setProjectArchived, subscribedSessionIds } from '../store/projects';
+import { useProjects, reportProjectError, switchProject, setProjectArchived, subscribedSessionIds } from '../store/projects';
 import { useT, t as ti, fmt } from '../i18n';
 import { toast } from '../lib/ui-store';
 
@@ -445,7 +445,7 @@ export default function SessionAtlas({ onClose, onSwitched, focusSessionId }: { 
             {projects.filter((p) => !p.archived).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 6).map((p) => (
               <button
                 key={p.id}
-                onClick={() => { onClose(); void switchProject(p.id).then(onSwitched); }}
+                onClick={() => { onClose(); void switchProject(p.id).then(onSwitched).catch(reportProjectError); }}
                 className="w-full text-left px-4 py-1.5 flex items-center gap-2 text-ink hover:bg-wash transition-colors"
                 data-atlas-recent={p.id}
               >
@@ -504,7 +504,7 @@ export default function SessionAtlas({ onClose, onSwitched, focusSessionId }: { 
               <div className="space-y-1.5">
                 {projects.filter((p) => !p.archived).sort((a, b) => b.updatedAt - a.updatedAt).map((p) => (
                   <div key={p.id} className="group flex items-center flex-wrap gap-2 border border-line rounded-xl px-4 py-3 hover:bg-wash transition-colors cursor-pointer"
-                    onClick={() => { onClose(); void switchProject(p.id).then(onSwitched); }}>
+                    onClick={() => { onClose(); void switchProject(p.id).then(onSwitched).catch(reportProjectError); }}>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm text-ink font-medium truncate">{p.name}</div>
                       <div className="text-2xs text-ink-faint mt-0.5 flex items-center gap-1.5">
@@ -515,7 +515,7 @@ export default function SessionAtlas({ onClose, onSwitched, focusSessionId }: { 
                     <button
                       title={t('switcher.archive')}
                       className="opacity-0 group-hover:opacity-100 text-ink-faint hover:text-amber-600 p-1.5 rounded transition-all shrink-0"
-                      onClick={(e) => { e.stopPropagation(); void setProjectArchived(p.id, true); }}
+                      onClick={(e) => { e.stopPropagation(); void setProjectArchived(p.id, true).catch(reportProjectError); }}
                       data-atlas-archive
                     >
                       <Archive size={15} strokeWidth={1.75} />
@@ -547,7 +547,7 @@ export default function SessionAtlas({ onClose, onSwitched, focusSessionId }: { 
                         <button
                           key={p.id}
                           title={t('atlas.restoreOpen')}
-                          onClick={() => { void setProjectArchived(p.id, false).then(() => { onClose(); void switchProject(p.id).then(onSwitched); }); }}
+                          onClick={() => { void setProjectArchived(p.id, false).then(() => { onClose(); void switchProject(p.id).then(onSwitched).catch(reportProjectError); }).catch(reportProjectError); }}
                           className="w-full text-left border border-dashed border-line rounded-xl px-4 py-2.5 hover:bg-wash transition-colors opacity-70 hover:opacity-100"
                           data-atlas-archived-item
                         >

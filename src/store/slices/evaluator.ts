@@ -36,7 +36,7 @@ export const createEvaluatorSlice: StateCreator<StoreState, [], [], EvaluatorSli
     if (condenseGuard()) return;
     const { nodes, edges } = get();
     const node = nodes.find((n) => n.id === nodeId);
-    if (!node || node.data.isLoading) return;
+    if (!node || node.data.isLoading || (node.data.editMode ?? 'ai') !== 'ai') return;
     // In-place regenerate works for anything with a question — roots included
     // (their context is just role + question). Material/frames never generate.
     if (!node.data.question) return;

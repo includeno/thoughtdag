@@ -1,6 +1,6 @@
 import type { CanvasEvent, ThoughtEdge, ThoughtNode, OrganizationRelation } from '../types';
 import type { CanvasTransaction, EntityChange, ProjectTaxonomy, Snapshot } from '../store/types';
-import { applyTransaction } from './transactions';
+import { applyTransaction, patchEntity } from './transactions';
 import { findParentCycles } from './knowledge';
 
 type EntityValidator<T extends { id: string }> = (value: unknown, name: string) => T;
@@ -30,7 +30,7 @@ const CANVAS_EVENT_OPS = new Set([
   'ask', 'generate', 'edit-question', 'edit-response', 'regenerate',
   'delete', 'archive', 'unarchive', 'highlight-add', 'highlight-remove',
   'connect', 'disconnect', 'merge', 'weave', 'explore', 'fanout',
-  'material-add', 'undo', 'redo',
+  'material-add', 'undo', 'redo', 'commit',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -78,7 +78,24 @@ function validateEntityChanges<T extends { id: string }>(
     if (!isRecord(candidate) || !isNonEmptyString(candidate.id)) throw new Error(`${name}[${index}] is invalid`);
     const beforePresent = Object.prototype.hasOwnProperty.call(candidate, 'before');
     const afterPresent = Object.prototype.hasOwnProperty.call(candidate, 'after');
-    if (!beforePresent && !afterPresent) throw new Error(`${name}[${index}] has no before or after entity`);
+    const patches = candidate.patches;
+    if (patches !== undefined) {
+      if (beforePresent || afterPresent || !Array.isArray(patches)) throw new Error(`${name}[${index}] invalid patches`);
+      const paths: string[][] = [];
+      for (const patch of patches) {
+        if (!isRecord(patch) || !Array.isArray(patch.path) || patch.path.length === 0
+          || patch.path.some(key => typeof key !== 'string' || !key || ['__proto__', 'prototype', 'constructor'].includes(key))
+          || patch.path[0] === 'id'
+          || (patch.path[0] === 'data' && (patch.path.length === 1 || ['attachments', 'tagIds', 'customTypeId'].includes(patch.path[1])))
+          || (!('before' in patch) && !('after' in patch))) throw new Error(`${name}[${index}] invalid patch path/value`);
+        const path = patch.path as string[];
+        if (paths.some(previous => previous.slice(0, Math.min(previous.length, path.length)).every((key, i) => key === path[i]))) {
+          throw new Error(`${name}[${index}] overlapping patch paths`);
+        }
+        paths.push(path);
+      }
+    }
+    if (!beforePresent && !afterPresent && patches === undefined) throw new Error(`${name}[${index}] has no before or after entity`);
     if (ids.has(candidate.id)) throw new Error(`Duplicate ${name} entity id: ${candidate.id}`);
     ids.add(candidate.id);
     if (beforePresent) {
@@ -96,10 +113,10 @@ function validateEntityChanges<T extends { id: string }>(
         throw new Error(`${name}[${index}].${indexName} must be a non-negative integer`);
       }
     }
-    if (!beforePresent && candidate.beforeIndex !== undefined) {
+    if (!beforePresent && patches === undefined && candidate.beforeIndex !== undefined) {
       throw new Error(`${name}[${index}].beforeIndex requires a before entity`);
     }
-    if (!afterPresent && candidate.afterIndex !== undefined) {
+    if (!afterPresent && patches === undefined && candidate.afterIndex !== undefined) {
       throw new Error(`${name}[${index}].afterIndex requires an after entity`);
     }
     return candidate as unknown as EntityChange<T>;
@@ -267,15 +284,16 @@ const TRANSIENT_KEYS = new Set([
 function canonicalJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalJson);
   if (!value || typeof value !== 'object') return value;
-  const normalized = Object.fromEntries(Object.keys(value as Record<string, unknown>)
-    .filter((key) => !TRANSIENT_KEYS.has(key) && (value as Record<string, unknown>)[key] !== undefined)
-    .sort()
-    .map((key) => [key, canonicalJson((value as Record<string, unknown>)[key])]));
-  if (typeof normalized.id === 'string' && normalized.position && normalized.data
-    && typeof normalized.data === 'object' && !Array.isArray(normalized.data)
-    && !Object.prototype.hasOwnProperty.call(normalized.data, 'tagIds')) {
-    normalized.data = { ...(normalized.data as Record<string, unknown>), tagIds: [] };
+  const record = value as Record<string, unknown>;
+  if (typeof record.id === 'string' && record.position && record.data
+    && typeof record.data === 'object' && !Array.isArray(record.data)
+    && !Object.prototype.hasOwnProperty.call(record.data, 'tagIds')) {
+    return canonicalJson({ ...record, data: { ...record.data, tagIds: [] } });
   }
+  const normalized = Object.fromEntries(Object.keys(record)
+    .filter((key) => !TRANSIENT_KEYS.has(key) && record[key] !== undefined)
+    .sort()
+    .map((key) => [key, canonicalJson(record[key])]));
   return normalized;
 }
 
@@ -365,6 +383,13 @@ function assertEntitySide<T extends { id: string }>(
     const expected = side === 'before' ? change.before : change.after;
     const expectedIndex = side === 'before' ? change.beforeIndex : change.afterIndex;
     const actual = currentById.get(change.id);
+    if (change.patches) {
+      if (!actual || !sameJson(actual, patchEntity(actual, change.patches, side))) {
+        throw new Error(`${name}.changes[${index}].${side} is not continuous for entity ${change.id}`);
+      }
+      if (expectedIndex !== undefined && current.indexOf(actual) !== expectedIndex) throw new Error(`${name} inconsistent entity index`);
+      continue;
+    }
     if (!expected) {
       if (actual) throw new Error(`${name}.changes[${index}].${side} expects entity ${change.id} to be absent`);
       continue;
@@ -401,14 +426,23 @@ function assertTransactionSide(snapshot: Snapshot, transaction: CanvasTransactio
 export function validateTransactionHistory(
   transactions: readonly CanvasTransaction[],
   current: Snapshot,
+  validators?: TransactionImportValidators,
 ): void {
-  assertSnapshotIntegrity(current, 'current');
+  const validateSnapshot = (snapshot: Snapshot, name: string) => {
+    assertSnapshotIntegrity(snapshot, name);
+    if (validators) {
+      snapshot.nodes.forEach(node => validators.node(node, name));
+      snapshot.edges.forEach(edge => validators.edge(edge, name));
+      snapshot.organizationRelations.forEach(relation => validators.organizationRelation(relation, name));
+    }
+  };
+  validateSnapshot(current, 'current');
   let baseline = current;
   for (let index = transactions.length - 1; index >= 0; index -= 1) {
     const transaction = transactions[index];
     assertTransactionSide(baseline, transaction, 'after', `transactions[${index}]`);
     baseline = applyTransaction(baseline, transaction, 'backward');
-    assertSnapshotIntegrity(baseline, `transactions[${index}].beforeSnapshot`);
+    validateSnapshot(baseline, `transactions[${index}].beforeSnapshot`);
   }
 
   let replayed = baseline;
@@ -416,7 +450,7 @@ export function validateTransactionHistory(
     assertTransactionSide(replayed, transaction, 'before', `transactions[${index}]`);
     replayed = applyTransaction(replayed, transaction, 'forward');
     assertTransactionSide(replayed, transaction, 'after', `transactions[${index}]`);
-    assertSnapshotIntegrity(replayed, `transactions[${index}].afterSnapshot`);
+    validateSnapshot(replayed, `transactions[${index}].afterSnapshot`);
   }
   if (!sameJson(replayed, current)) throw new Error('transaction log does not reproduce the current snapshot');
 }

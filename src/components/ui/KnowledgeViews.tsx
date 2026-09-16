@@ -11,11 +11,11 @@ import {
   X,
 } from 'lucide-react';
 import { useStore } from '../../store';
+import { useProjects } from '../../store/projects';
 import { useUiStore } from '../../lib/ui-store';
 import {
   groupKnowledgeCardsByTime as groupKnowledgeCards,
-  projectKnowledgeQuery,
-  resolveKnowledgeQuery,
+  type KnowledgeQueryProjection,
   projectKnowledgeTree as buildKnowledgeTree,
   type CardTimeGroup,
   type KnowledgeGraphInput,
@@ -28,6 +28,7 @@ import NodeTaxonomyBadges from './NodeTaxonomyBadges';
 type KnowledgeView = 'tree' | 'card';
 
 type KnowledgeViewMessageKey =
+  | 'knowledgeViews.showMore'
   | 'knowledgeViews.tree'
   | 'knowledgeViews.card'
   | 'knowledgeViews.switcher'
@@ -49,6 +50,7 @@ type KnowledgeViewMessageKey =
 type ViewTranslator = (key: KnowledgeViewMessageKey) => string;
 
 export interface KnowledgeViewsProps {
+  projection: KnowledgeQueryProjection;
   /** Called after shared selection/active-node state has been updated. */
   onLocate?: (nodeId: string) => void;
   onSearch?: () => void;
@@ -66,6 +68,7 @@ function nodeTitle(node: ThoughtNode, untitled: string): string {
 }
 
 function nodeExcerpt(node: ThoughtNode, title: string): string {
+  if (node.data.editMode === 'manual') return '';
   const index = node.data.responseIndex;
   const summary = node.data.summaries?.[index] ?? node.data.summary;
   const response = node.data.responses[index] ?? node.data.response;
@@ -79,7 +82,7 @@ function TreeRow({
   item,
   nodesById,
   activeNodeId,
-  collapsedKeys,
+  expandedKeys,
   onToggle,
   onActivate,
   tx,
@@ -87,7 +90,7 @@ function TreeRow({
   item: KnowledgeTreeItem;
   nodesById: ReadonlyMap<string, ThoughtNode>;
   activeNodeId: string | null;
-  collapsedKeys: ReadonlySet<string>;
+  expandedKeys: ReadonlySet<string>;
   onToggle: (key: string) => void;
   onActivate: (nodeId: string) => void;
   tx: ViewTranslator;
@@ -97,7 +100,7 @@ function TreeRow({
 
   const title = nodeTitle(node, tx('knowledgeViews.untitled'));
   const hasChildren = item.children.length > 0;
-  const collapsed = hasChildren && collapsedKeys.has(item.key);
+  const collapsed = hasChildren && !expandedKeys.has(item.key);
   const active = item.nodeId === activeNodeId;
   const paddingInlineStart = Math.min(item.depth, 12) * 20 + 12;
 
@@ -176,7 +179,7 @@ function TreeRow({
               item={child}
               nodesById={nodesById}
               activeNodeId={activeNodeId}
-              collapsedKeys={collapsedKeys}
+              expandedKeys={expandedKeys}
               onToggle={onToggle}
               onActivate={onActivate}
               tx={tx}
@@ -193,7 +196,7 @@ function TreeView({
   matchedNodeIds,
   nodesById,
   activeNodeId,
-  collapsedKeys,
+  expandedKeys,
   onToggle,
   onActivate,
   tx,
@@ -202,11 +205,12 @@ function TreeView({
   matchedNodeIds: readonly string[];
   nodesById: ReadonlyMap<string, ThoughtNode>;
   activeNodeId: string | null;
-  collapsedKeys: ReadonlySet<string>;
+  expandedKeys: ReadonlySet<string>;
   onToggle: (key: string) => void;
   onActivate: (nodeId: string) => void;
   tx: ViewTranslator;
 }) {
+  const [limit, setLimit] = useState(100);
   const projection = useMemo(
     () => buildKnowledgeTree(graph, { nodeIds: matchedNodeIds }),
     [graph, matchedNodeIds],
@@ -224,19 +228,20 @@ function TreeView({
         </div>
       )}
       <ul role="tree" className="py-1">
-        {projection.roots.map((root) => (
+        {projection.roots.slice(0, limit).map((root) => (
           <TreeRow
             key={root.key}
             item={root}
             nodesById={nodesById}
             activeNodeId={activeNodeId}
-            collapsedKeys={collapsedKeys}
+            expandedKeys={expandedKeys}
             onToggle={onToggle}
             onActivate={onActivate}
             tx={tx}
           />
         ))}
       </ul>
+      {projection.roots.length > limit && <button className="m-3 text-sm text-accent" onClick={() => setLimit((n) => n + 100)}>{tx('knowledgeViews.showMore')}</button>}
     </div>
   );
 }
@@ -269,10 +274,13 @@ function CardView({
   tx: ViewTranslator;
 }) {
   const locale = useDateLocale();
+  const [limit, setLimit] = useState(100);
   const groups = useMemo(
     () => groupKnowledgeCards(graph, { nodeIds: matchedNodeIds }),
     [graph, matchedNodeIds],
   );
+
+  const visibleIds = new Set(groups.flatMap((group) => group.nodeIds).slice(0, limit));
 
   if (groups.length === 0) {
     return <EmptyView tx={tx} />;
@@ -280,7 +288,7 @@ function CardView({
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-7">
-      {groups.map((group) => (
+      {groups.filter((group) => group.nodeIds.some((id) => visibleIds.has(id))).map((group) => (
         <section key={group.key}>
           <header className="mb-2 flex items-center gap-2 px-1">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
@@ -291,7 +299,7 @@ function CardView({
             </span>
           </header>
           <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
-            {group.nodeIds.map((nodeId) => {
+            {group.nodeIds.filter((id) => visibleIds.has(id)).map((nodeId) => {
               const node = nodesById.get(nodeId);
               if (!node) return null;
               const title = nodeTitle(node, tx('knowledgeViews.untitled'));
@@ -336,6 +344,7 @@ function CardView({
           </div>
         </section>
       ))}
+      {matchedNodeIds.length > limit && <button className="text-sm text-accent" onClick={() => setLimit((n) => n + 100)}>{tx('knowledgeViews.showMore')}</button>}
     </div>
   );
 }
@@ -349,44 +358,26 @@ function EmptyView({ tx }: { tx: ViewTranslator }) {
   );
 }
 
-function KnowledgeViewsOverlay({ view, onLocate, onSearch }: KnowledgeViewsProps & { view: KnowledgeView }) {
+function KnowledgeViewsOverlay({ view, onLocate, onSearch, projection: queryProjection }: KnowledgeViewsProps & { view: KnowledgeView }) {
   const rawT = useT();
   const tx: ViewTranslator = (key) => rawT(key as Parameters<typeof rawT>[0]);
   const nodes = useStore((state) => state.nodes);
   const edges = useStore((state) => state.edges);
   const organizationRelations = useStore((state) => state.organizationRelations);
-  const knowledgeQuery = useUiStore((state) => state.knowledgeQuery);
   const activeNodeId = useUiStore((state) => state.activeNodeId);
-  const localDepth = useUiStore((state) => state.localDepth);
   const setCanvasView = useUiStore((state) => state.setCanvasView);
-  const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(() => new Set());
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
 
   const graph = useMemo<KnowledgeGraphInput>(
     () => ({ nodes, edges, organizationRelations }),
     [edges, nodes, organizationRelations],
-  );
-  const effectiveQuery = useMemo(
-    () => resolveKnowledgeQuery(knowledgeQuery, activeNodeId),
-    [knowledgeQuery, activeNodeId],
-  );
-  const queryProjection = useMemo(
-    () => {
-      try { return projectKnowledgeQuery(graph, effectiveQuery, { activeNodeId, localDepth }); }
-      catch {
-        return {
-          candidateNodeIds: [], matchedNodeIds: [], visibleNodeIds: [], hits: [],
-          activeOutsideFilter: false, neighborhood: null,
-        };
-      }
-    },
-    [graph, effectiveQuery, activeNodeId, localDepth],
   );
   const nodesById = useMemo(
     () => new Map(nodes.map((node) => [node.id, node])),
     [nodes],
   );
   const onToggle = useCallback((key: string) => {
-    setCollapsedKeys((current) => {
+    setExpandedKeys((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -482,7 +473,7 @@ function KnowledgeViewsOverlay({ view, onLocate, onSearch }: KnowledgeViewsProps
             matchedNodeIds={queryProjection.visibleNodeIds}
             nodesById={nodesById}
             activeNodeId={activeNodeId}
-            collapsedKeys={collapsedKeys}
+            expandedKeys={expandedKeys}
             onToggle={onToggle}
             onActivate={onActivate}
             tx={tx}
@@ -504,6 +495,7 @@ function KnowledgeViewsOverlay({ view, onLocate, onSearch }: KnowledgeViewsProps
 
 export default function KnowledgeViews(props: KnowledgeViewsProps) {
   const canvasView = useUiStore((state) => state.canvasView);
+  const projectId = useProjects(state => state.activeId);
   if (canvasView === 'canvas') return null;
-  return <KnowledgeViewsOverlay {...props} view={canvasView} />;
+  return <KnowledgeViewsOverlay key={projectId} {...props} view={canvasView} />;
 }

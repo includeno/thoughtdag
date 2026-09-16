@@ -30,8 +30,15 @@ export default function QuestionSection({
   const submitHumanTurn = useStore((s) => s.submitHumanTurn);
   const setEditing = useStore((s) => s.setEditing);
   const t = useT();
+  const data = useStore((s) => s.nodes.find((n) => n.id === nodeId)?.data);
+  const isManual = (data?.editMode ?? 'ai') !== 'ai';
 
-  const [editValue, setEditValue] = useState('');
+  const [editValue, setEditValue] = useState(question);
+  const [savedQuestion, setSavedQuestion] = useState(question);
+  if (savedQuestion !== question) {
+    setSavedQuestion(question);
+    setEditValue(question);
+  }
 
   const handleDoubleClickQuestion = () => {
     setEditValue(question);
@@ -46,8 +53,8 @@ export default function QuestionSection({
 
   const handleEditSubmit = () => {
     if (!editValue.trim()) return;
-    // Unchanged question: close the editor, never regenerate
-    if (editValue.trim() === question) { setEditing(nodeId, false); return; }
+    // Manual saves with unchanged text only close the editor.
+    if (editValue.trim() === question && isManual) { setEditing(nodeId, false); return; }
     if (isHuman) submitHumanTurn(nodeId, editValue.trim());
     else editQuestion(nodeId, editValue.trim());
   };
@@ -79,7 +86,7 @@ export default function QuestionSection({
 
   return (
     <div className="panel-card px-4 py-3">
-      <label className="text-2xs font-semibold text-accent mb-1 block">{t('panel.question')}</label>
+      <label className="text-2xs font-semibold text-accent mb-1 block">{t(isManual ? 'editMode.subject' : 'panel.question')}</label>
       {branchContext && (
         <div className="mb-2 text-xs pl-3 py-1.5 pr-2 border-l-2 border-warm bg-warm/10 rounded-r text-ink-muted italic leading-relaxed">
           “{branchContext.slice(0, 240)}{branchContext.length > 240 ? '…' : ''}”
@@ -94,12 +101,12 @@ export default function QuestionSection({
             onBlur={awaiting || isHuman ? undefined : handleEditBlur}
             onInput={(e) => autoGrowTa(e.currentTarget)}
             ref={autoGrowTa}
-            placeholder={placeholder}
+            placeholder={data?.editMode === 'manual-detail' ? t('editMode.subjectPlaceholder') : isManual ? t('editMode.placeholder') : placeholder}
             className="w-full bg-wash border border-accent rounded-xl p-3 text-sm text-ink resize-none focus:outline-none focus:ring-2 focus:ring-accent/20"
             rows={3}
             autoFocus
           />
-          {!awaiting && !isHuman && (
+          {!isHuman && (
             <div className="flex items-center justify-end gap-2 mt-1.5">
               <button
                 onMouseDown={(e) => e.preventDefault()}
@@ -116,7 +123,7 @@ export default function QuestionSection({
                 className="text-xs bg-accent hover:bg-accent-strong disabled:opacity-30 disabled:cursor-not-allowed text-white px-3.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
                 data-edit-submit
               >
-                <Check size={12} strokeWidth={2.25} /> {t('question.editSubmit')}
+                <Check size={12} strokeWidth={2.25} /> {t(isManual ? 'editMode.save' : 'question.editSubmit')}
               </button>
             </div>
           )}

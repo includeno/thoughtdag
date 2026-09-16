@@ -5,6 +5,7 @@ import { attachmentFingerprint } from '../lib/attachments';
 import { countTokens } from '../utils';
 import { fuzzyHighlightRegex } from '../lib/highlight-match';
 import type { ContextMessage, ImageAttachment } from '../lib/api';
+import { nodeEditMode } from '../lib/edit-mode';
 
 // Build the prompt from the layered context partition (lib/graph.ts).
 // The order rule, in one sentence: materials → reference blocks → the live
@@ -47,6 +48,7 @@ function nodeTitle(node: ThoughtNode): string {
 
 /** A node's response as context text, respecting its highlight mode. */
 function renderResponse(node: ThoughtNode): string {
+  if (nodeEditMode(node.data) === 'manual') return '';
   const mode = node.data.highlightMode || 'off';
   const highlights = node.data.highlights || [];
   if (mode === 'filter' && highlights.length > 0) {
@@ -69,7 +71,7 @@ function transcriptLines(node: ThoughtNode): string[] {
   const lines: string[] = [];
   if (node.data.question) lines.push(`Q: ${node.data.question}`);
   const a = renderResponse(node);
-  if (a) lines.push(`A: ${a}`);
+  if (a) lines.push(`${nodeEditMode(node.data) === 'manual-detail' ? 'Note' : 'A'}: ${a}`);
   return lines;
 }
 
@@ -95,10 +97,10 @@ export function referenceBlockContent(ref: ContextReference): string {
 /** Deterministic fingerprint of an assembled context — recorded on each
     generation (provenance seed for the staleness pass). */
 export function hashContext(messages: ContextMessage[], images: ImageAttachment[] = []): string {
-  const s = JSON.stringify(messages) + `#img:${images.map((i) => i.data.length).join(',')}`;
+  const s = JSON.stringify({ messages, images: images.map(i => ({ mimeType: i.mimeType, data: i.data })) });
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(36);
+  return `v2:${(h >>> 0).toString(36)}`;
 }
 
 /**
@@ -122,11 +124,12 @@ export function upstreamFingerprint(nodeId: string, nodes: ThoughtNode[], edges:
       summaries: undefined,
       summaryTypes: undefined,
       generatedBy: undefined,
-      ...(n.id === nodeId ? { question: '', response: '', attachments: [] } : {}),
+      ...(n.id === nodeId ? { question: '', response: '' } : {}),
     },
   }));
-  const { messages } = buildContext(nodeId, normalized, edges);
-  return hashContext(messages);
+  const self = nodes.find(n => n.id === nodeId)?.data;
+  const { messages, images } = buildContext(nodeId, normalized, edges, undefined, self?.excludedAttachmentIds, self?.includedAttachmentIds);
+  return hashContext(messages, images);
 }
 
 const STALE_MARK = '[Stale: this answer was written against an earlier version of its upstream]';
@@ -323,9 +326,10 @@ export function buildContext(
       messages.push({ role: 'user', content: node.data.question });
       sources.push({ layer: 'chain', nodeId: node.id, part: 'question' });
     }
-    if (node.data.response) {
-      const rendered = renderResponse(node);
-      messages.push({ role: 'assistant', content: staleSet.has(node.id) ? `${STALE_MARK}\n${rendered}` : rendered });
+    const rendered = renderResponse(node);
+    if (rendered) {
+      const manual = nodeEditMode(node.data) === 'manual-detail';
+      messages.push({ role: manual ? 'user' : 'assistant', content: manual ? `[Note]\n${rendered}` : staleSet.has(node.id) ? `${STALE_MARK}\n${rendered}` : rendered });
       sources.push({ layer: 'chain', nodeId: node.id, part: 'response' });
     }
   }

@@ -1,5 +1,5 @@
 {
-  "name": "thoughtdag",
+  "name": "@includeno/thoughtdag",
   "version": "0.1.2",
   "description": "Find the conversations that shaped a file. Indexes local Claude Code, Codex and DeepSeek Harness sessions by the files they touched; source files are never written.",
   "license": "MIT",
@@ -22,10 +22,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/chenxiachan/thoughtdag.git",
+    "url": "https://github.com/includeno/thoughtdag.git",
     "directory": "cli"
   },
-  "homepage": "https://github.com/chenxiachan/thoughtdag#readme",
+  "homepage": "https://github.com/includeno/thoughtdag#readme",
   "keywords": [
     "claude-code",
     "codex",

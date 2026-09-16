@@ -12,6 +12,7 @@ import { Markdown } from './Markdown';
 import { countTokens } from '../utils';
 import { useT, fmt } from '../i18n';
 import { isViewerMode } from '../lib/viewer';
+import EditModeSelect from './ui/EditModeSelect';
 import NodeTaxonomyBadges from './ui/NodeTaxonomyBadges';
 
 // Content nodes: canvas material, not turns. A note (markdown), a file
@@ -49,6 +50,11 @@ export default function ContentNode({ id, data, selected }: NodeProps<ThoughtNod
   const kind = data.stepKind === 'file' ? 'file' : data.stepKind === 'link' ? 'link' : 'note';
   const [editing, setEditing] = useState(!isViewerMode && kind === 'note' && !data.question);
   const [draft, setDraft] = useState(data.question);
+  const [savedQuestion, setSavedQuestion] = useState(data.question);
+  if (savedQuestion !== data.question) {
+    setSavedQuestion(data.question);
+    setDraft(data.question);
+  }
   const [openExtract, setOpenExtract] = useState<string | null>(null); // attId whose extraction panel is open
   const setAttachmentData = useStore((s) => s.setAttachmentData);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -158,6 +164,7 @@ export default function ContentNode({ id, data, selected }: NodeProps<ThoughtNod
           {kind === 'link'
             ? <span className="text-2xs text-ink-muted truncate">{linkDomain}</span>
             : <span className="text-2xs text-ink-faint font-mono">{kind === 'note' ? `${data.tokenCount} tok` : `${attachments.length}`}</span>}
+          {kind === 'note' && !isViewerMode && <EditModeSelect value="manual" onChange={(mode) => { if (editing) commit(); useStore.getState().setNodeEditMode(id, mode); }} />}
           <NodeTaxonomyBadges tagIds={data.tagIds} customTypeId={data.customTypeId} compact />
           {clipSourceName && (
             <button

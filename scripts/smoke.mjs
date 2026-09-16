@@ -2,6 +2,7 @@
 // Prereq: `npm run dev` running on :5173. Usage: `npm run smoke`.
 // Checks: hydration completes → landing shows on empty store → injected
 // node survives a reload (IndexedDB roundtrip) → no console errors.
+import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 
 const CHROME = process.env.CHROME_PATH
@@ -13,8 +14,14 @@ const browser = await chromium.launch({ executablePath: CHROME, headless: true }
 // test asserts against the English landing placeholder.
 const ctx = await browser.newContext({ locale: 'en-US' });
 const page = await ctx.newPage();
+await page.route('**/api/**', (route) => route.fulfill({ json: {
+  models: [{ id: 'test', name: 'Test model', provider: 'test', vision: false }], default: 'test',
+} }));
 // Suppress first-run example seeding — this test asserts the EMPTY landing.
-await page.addInitScript(() => localStorage.setItem('thoughtdag.seeded', 'yes'));
+await page.addInitScript(() => {
+  localStorage.setItem('thoughtdag.seeded', 'yes');
+  localStorage.setItem('thoughtdag.tutorialDone', '1');
+});
 
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
@@ -26,7 +33,7 @@ console.log('== visit 1: fresh context ==');
 await page.goto(URL, { waitUntil: 'networkidle' });
 await page.waitForTimeout(1500);
 
-const landing1 = await page.getByPlaceholder('What would you like to explore?').count();
+const landing1 = await page.getByPlaceholder('Enter content to record…').count();
 console.log('landing visible:', landing1 === 1);
 
 const state1 = await page.evaluate(() => ({
@@ -34,6 +41,55 @@ const state1 = await page.evaluate(() => ({
   nodes: window.__store?.getState?.().nodes?.length,
 }));
 console.log('store state:', JSON.stringify(state1));
+
+// Exercise manual entry and the explicit mode switch without a live model.
+let generations = 0;
+await page.route('**/api/stream', (route) => {
+  generations++;
+  return route.fulfill({ contentType: 'text/event-stream', body: 'data: {"text":"Mode test answer"}\n\ndata: [DONE]\n\n' });
+});
+await page.getByPlaceholder('Enter content to record…').fill('Manual mode test');
+await page.getByRole('button', { name: 'Save content', exact: true }).click();
+await page.waitForFunction(() => window.__store.getState().nodes.length === 1);
+assert.equal(await page.evaluate(() => window.__store.getState().nodes[0].data.editMode), 'manual');
+assert.equal(generations, 0);
+const modeCard = page.locator('.thought-node');
+await modeCard.getByRole('combobox', { name: 'Editing mode' }).selectOption('manual-detail');
+await modeCard.getByRole('textbox', { name: 'Details', exact: true }).fill('User written details');
+await modeCard.getByRole('button', { name: 'Save', exact: true }).click();
+assert.equal(generations, 0, 'structured notes are entirely user-authored');
+assert.equal(await page.evaluate(() => window.__store.getState().nodes[0].data.response), 'User written details');
+await modeCard.getByRole('combobox', { name: 'Editing mode' }).selectOption('manual');
+assert.equal(await modeCard.getByText('User written details', { exact: true }).count(), 0, 'quick notes show only the subject');
+await modeCard.getByRole('combobox', { name: 'Editing mode' }).selectOption('manual-detail');
+await modeCard.getByText('User written details', { exact: true }).waitFor();
+await modeCard.getByRole('combobox', { name: 'Editing mode' }).selectOption('ai');
+// The retained subject must generate even when its text did not change.
+assert.equal(generations, 0, 'switching mode alone does not generate');
+await modeCard.getByRole('button', { name: 'Submit & generate', exact: true }).click();
+await page.waitForFunction(() => window.__store.getState().nodes[0].data.response === 'Mode test answer');
+assert.equal(generations, 1);
+await modeCard.getByRole('combobox', { name: 'Editing mode' }).selectOption('manual');
+await modeCard.locator('textarea').fill('Edited manually');
+await modeCard.getByRole('button', { name: 'Save content', exact: true }).click();
+assert.equal(generations, 1, 'manual save does not generate');
+assert.equal(await page.evaluate(() => window.__store.getState().nodes[0].data.response), 'Mode test answer');
+await modeCard.locator('.drag-handle').first().click({ button: 'right' });
+await page.getByRole('combobox', { name: 'Editing mode' }).last().selectOption('manual-detail');
+await modeCard.getByText('Mode test answer', { exact: true }).waitFor();
+await page.evaluate(async () => {
+  const { executeCliCommand } = await import('/src/lib/cli-executor.ts');
+  await executeCliCommand('node.update', { nodeId: window.__store.getState().nodes[0].id, patch: { editMode: 'manual', question: 'CLI updated subject' } });
+});
+assert.equal(await modeCard.getByRole('combobox', { name: 'Editing mode' }).inputValue(), 'manual');
+assert.equal(await modeCard.locator('textarea').inputValue(), 'CLI updated subject');
+assert.equal(await modeCard.getByText('Mode test answer', { exact: true }).count(), 0);
+assert.equal(generations, 1, 'context menu and CLI mode switches do not generate');
+await page.waitForTimeout(1500);
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForFunction(() => window.__store?.getState().nodes[0]?.data.editMode === 'manual');
+assert.equal(await page.evaluate(() => window.__store.getState().nodes[0].data.question), 'CLI updated subject');
+console.log('quick/structured notes, explicit AI generation, mode switch and persistence: PASS');
 
 // Inject a node directly through the store (no LLM dependency) to test persistence.
 await page.evaluate(() => {
@@ -63,14 +119,14 @@ const state2 = await page.evaluate(() => ({
 console.log('after reload:', JSON.stringify(state2));
 const nodeCard = await page.locator('.thought-node').count();
 console.log('node card rendered:', nodeCard);
-const landing2 = await page.getByPlaceholder('What would you like to explore?').count();
+const landing2 = await page.getByPlaceholder('Enter content to record…').count();
 console.log('landing hidden after restore:', landing2 === 0);
 
 console.log('== errors ==');
 console.log(errors.length ? errors.join('\n') : '(none)');
 
 await browser.close();
-const pass = state1.hydrated === true && landing1 === 1
+const pass = errors.length === 0 && state1.hydrated === true && landing1 === 1
   && state2.hydrated === true && state2.nodes === 1
   && state2.firstQuestion === 'smoke test question' && nodeCard === 1;
 console.log(pass ? 'SMOKE PASS' : 'SMOKE FAIL');

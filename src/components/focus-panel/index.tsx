@@ -1,3 +1,4 @@
+import EditModeSelect from '../ui/EditModeSelect';
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import { useStore } from '../../store';
@@ -114,6 +115,7 @@ export default function FocusPanel({ onFocusNode }: { onFocusNode?: (id: string)
       </div>
       {/* Header: summary kicker (role · tokens · materials) + action strip */}
       <div className="flex items-start gap-2 pl-4 pr-3 py-1.5 border-b border-line/70 shrink-0">
+        {!data.stepKind && !isViewerMode && <EditModeSelect value={data.editMode ?? 'ai'} disabled={data.isLoading} onChange={(mode) => useStore.getState().setNodeEditMode(node.id, mode)} />}
         <RoleLine nodeId={selectedNodeId!} data={data} inheritedRole={inheritedRole} />
         <div className="flex items-center gap-1 shrink-0">
           {!isViewerMode && <HeaderActions nodeId={selectedNodeId!} isLoading={data.isLoading} />}
@@ -181,7 +183,7 @@ export default function FocusPanel({ onFocusNode }: { onFocusNode?: (id: string)
 
       {/* The ONE input — pinned at bottom; selected text stages into it.
           Hidden while the node waits for its own question above. */}
-      {!awaiting && !isViewerMode && (
+      {!awaiting && (data.editMode ?? 'ai') === 'ai' && !isViewerMode && (
         <FollowUpInput
           key={selectedNodeId}
           nodeId={selectedNodeId!}

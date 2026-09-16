@@ -1,3 +1,4 @@
+import { responseVersions, withResponseVersions } from '../../lib/response-versions';
 import type { StateCreator } from 'zustand';
 import type { Highlight } from '../../types';
 import type { StoreState, HighlightSlice } from '../types';
@@ -51,20 +52,17 @@ export const createHighlightSlice: StateCreator<StoreState, [], [], HighlightSli
     }));
   },
 
-  setSummary: (nodeId: string, summary: string, forResponse: string, type?: string, topic?: string) => {
-    set((state) => ({
-      nodes: state.nodes.map((n) => {
-        if (n.id !== nodeId) return n;
-        const idx = n.data.responses.indexOf(forResponse);
-        if (idx === -1) return n; // the version was edited/deleted meanwhile
-        const summaries = [...(n.data.summaries ?? [])];
-        summaries[idx] = summary;
-        const summaryTypes = [...(n.data.summaryTypes ?? [])];
-        summaryTypes[idx] = type ?? 'insight';
-        const summaryTopics = [...(n.data.summaryTopics ?? [])];
-        summaryTopics[idx] = topic;
-        return { ...n, data: { ...n.data, summaries, summaryTypes, summaryTopics } };
-      }),
-    }));
+  setSummary: (nodeId, summary, forResponse, type, topic, versionId) => {
+    set((state) => ({ nodes: state.nodes.map((n) => {
+      if (n.id !== nodeId) return n;
+      const versions = responseVersions(n.data);
+      const idx = versionId ? versions.findIndex(v => v.id === versionId && v.response === forResponse)
+        : versions.findIndex(v => v.response === forResponse);
+      if (idx === -1) return n;
+      const next = versions.map((v, i) => i === idx ? { ...v, summary, summaryType: type ?? 'insight', summaryTopic: topic } : v);
+      const projected = withResponseVersions(n.data, next);
+      // A late summary must never overwrite a draft or an in-flight response.
+      return { ...n, data: { ...projected, question: n.data.question, response: n.data.response } };
+    }) }));
   },
 });

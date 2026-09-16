@@ -338,6 +338,9 @@ try {
   assert.deepEqual(storedLegacy.state.transactions, []);
   assert.equal(storedLegacy.state.revision, 0);
 
+  await rejectWithoutWrite('invalid edit mode', (input) => { input.nodes[0].data.editMode = 'wrong'; });
+  await rejectWithoutWrite('mode incompatible with node kind', (input) => { input.nodes[0].data.stepKind = 'file'; input.nodes[0].data.editMode = 'ai'; });
+
   console.log('Web v2 import validation tests passed');
 } finally {
   await vite.close();

@@ -29,6 +29,7 @@ export default function HeaderActions({ nodeId, isLoading }: { nodeId: string; i
     const n = s.nodes.find((x) => x.id === nodeId);
     return !!n?.data.source && (n.data.question !== n.data.source.question || n.data.response !== n.data.source.response);
   });
+  const isManual = useStore((s) => (s.nodes.find((n) => n.id === nodeId)?.data.editMode ?? 'ai') !== 'ai');
   const t = useT();
 
   const revertToSource = () => {
@@ -69,7 +70,7 @@ export default function HeaderActions({ nodeId, isLoading }: { nodeId: string; i
         >
           <Square size={12} strokeWidth={1.75} fill="currentColor" />
         </button>
-      ) : (
+      ) : !isManual && (
         <button
           onClick={() => void rerunNode(nodeId, {})}
           disabled={isLoading}
@@ -86,7 +87,7 @@ export default function HeaderActions({ nodeId, isLoading }: { nodeId: string; i
       >
         {isArchived ? <ArchiveRestore size={16} strokeWidth={1.75} /> : <Archive size={16} strokeWidth={1.75} />}
       </button>
-      <ModelPicker compact value={nodeModel} onChange={(m) => setNodeModel(nodeId, m)} />
+      {!isManual && <ModelPicker compact value={nodeModel} onChange={(m) => setNodeModel(nodeId, m)} />}
 
       <div ref={menuRef} className="relative">
         <button onClick={() => setMenuOpen((v) => !v)} title={t('panel.more')} className={`${iconBtn} ${menuOpen ? 'bg-line/50 text-ink' : ''}`}>
@@ -94,12 +95,12 @@ export default function HeaderActions({ nodeId, isLoading }: { nodeId: string; i
         </button>
         {menuOpen && (
           <div className="absolute right-0 top-full mt-1 bg-card border border-line rounded-xl shadow-lg py-1 w-[210px] z-30 animate-fade-in">
-            <button className={menuItem} onClick={() => { setMenuOpen(false); setFanOutOpen(true); }} title={t('fanout.entryTitle')}>
+            {!isManual && <><button className={menuItem} onClick={() => { setMenuOpen(false); setFanOutOpen(true); }} title={t('fanout.entryTitle')}>
               <Split size={15} strokeWidth={1.75} /> {t('fanout.entry')}
             </button>
             <button className={menuItem} onClick={() => { setMenuOpen(false); void regenerate(nodeId); }} title={t('actions.regenBranchTitle')}>
               <GitFork size={15} strokeWidth={1.75} /> {t('actions.regenBranch')}
-            </button>
+            </button></>}
             <button className={menuItem} onClick={() => { setMenuOpen(false); duplicateNode(nodeId); }}>
               <Copy size={15} strokeWidth={1.75} /> {t('common.duplicate')}
             </button>

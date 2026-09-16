@@ -28,6 +28,8 @@ export interface EntityChange<T> {
   after?: T;
   beforeIndex?: number;
   afterIndex?: number;
+  /** Updates carry only changed leaves; insertions/deletions retain entities. */
+  patches?: { path: string[]; before?: unknown; after?: unknown }[];
 }
 
 /** Durable reversible record. `change` is a user operation; undo/redo append
@@ -101,6 +103,7 @@ export interface NodeSlice {
   deleteEdges: (edgeIds: string[]) => void;
   editResponse: (nodeId: string, response: string) => void;
   toggleCollapse: (nodeId: string) => void;
+  setNodeEditMode: (nodeId: string, mode: 'manual' | 'manual-detail' | 'ai') => void;
   setEditing: (nodeId: string, editing: boolean) => void;
   setEditingResponse: (nodeId: string, editing: boolean) => void;
   duplicateNode: (nodeId: string) => void;
@@ -131,6 +134,8 @@ export interface NodeSlice {
 }
 
 export interface AddQuestionOptions {
+  editMode?: 'manual' | 'manual-detail' | 'ai';
+  initialResponse?: string;
   parentId?: string;
   /** Selected text this node explores; also marks the node as an orange branch. */
   branchContext?: string;
@@ -173,7 +178,7 @@ export interface HighlightSlice {
   addHighlight: (nodeId: string, highlight: Highlight) => void;
   removeHighlight: (nodeId: string, highlightId: string) => void;
   setHighlightMode: (nodeId: string, mode: 'off' | 'tag' | 'filter') => void;
-  setSummary: (nodeId: string, summary: string, forResponse: string, type?: string, topic?: string) => void;
+  setSummary: (nodeId: string, summary: string, forResponse: string, type?: string, topic?: string, versionId?: string) => void;
   setMaterialSummary: (nodeId: string, summary: string, topic?: string) => void;
 }
 
@@ -201,6 +206,8 @@ export interface AttachmentSlice {
 export type StoreState = HistorySlice & NodeSlice & LlmSlice & RoleSlice & HighlightSlice & AttachmentSlice & EvaluatorSlice & EventSlice & KnowledgeSlice;
 
 export type PersistedState = {
+  /** Last committed graph while a draft is being streamed/extracted. */
+  draftBaseline?: Snapshot;
   nodes: ThoughtNode[];
   edges: ThoughtEdge[];
   events?: CanvasEvent[];

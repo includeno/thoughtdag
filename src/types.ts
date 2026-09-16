@@ -132,9 +132,31 @@ export interface OrganizationRelation {
   createdAt: string;
 }
 
-export interface ThoughtData extends Record<string, unknown> {
+export interface ResponseVersion {
+  effort?: string;
+  id: string;
   question: string;
   response: string;
+  author: 'user' | 'model' | 'unknown';
+  model?: string;
+  reasoning?: string;
+  generatedAt?: string;
+  editedAt?: string;
+  references?: Reference[];
+  contextHash?: string;
+  summary?: string;
+  summaryType?: string;
+  summaryTopic?: string;
+  gatewaySearch?: boolean;
+}
+
+export interface ThoughtData extends Record<string, unknown> {
+  /** Editing behavior; absent on legacy AI turns. Independent of classification. */
+  editMode?: 'manual' | 'manual-detail' | 'ai';
+  question: string;
+  response: string;
+  responseVersions?: ResponseVersion[];
+  /** Compatibility projection of responseVersions; new writers use withResponseVersions. */
   responses: string[];
   /** Question wording per version, parallel to `responses` — a version is a
       (question, answer) PAIR, so an edited question never orphans the

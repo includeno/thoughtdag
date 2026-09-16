@@ -24,15 +24,10 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "io.github.chenxiachan.thoughtdag",
-    "productName": "ThoughtDAG",
+    "appId": "io.github.includeno.thoughtdag",
+    "productName": "ThoughtDAG Includeno",
     "protocols": [
-      {
-        "name": "ThoughtDAG",
-        "schemes": [
-          "thoughtdag"
-        ]
-      }
+      { "name": "ThoughtDAG", "schemes": ["thoughtdag-includeno"] }
     ],
     "icon": "build/icon.png",
     "directories": {
@@ -84,7 +79,7 @@
     "npmRebuild": false,
     "publish": {
       "provider": "github",
-      "owner": "chenxiachan",
+      "owner": "includeno",
       "repo": "thoughtdag"
     }
   },

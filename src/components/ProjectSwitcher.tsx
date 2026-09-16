@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Archive, ChevronDown, Dna, FolderOpen, Loader2, Map as MapIcon, Pencil, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
 import SessionAtlas from './SessionAtlas';
 import { knownSessionIds } from '../lib/atlas/discover';
-import { useProjects, switchProject, createProject, renameProject, deleteProject, setProjectArchived } from '../store/projects';
+import { useProjects, reportProjectError, switchProject, createProject, renameProject, deleteProject, setProjectArchived } from '../store/projects';
 import { useI18n } from '../i18n';
 import { parseImportFile } from '../lib/export';
 import ImportChatModal from './ImportChatModal';
@@ -55,7 +55,7 @@ export default function ProjectSwitcher({ onSwitched }: { onSwitched: () => void
       confirmLabel: ti('common.delete'),
       danger: u !== 'pristine-mirror',
     });
-    if (ok) void deleteProject(p.id).then(onSwitched);
+    if (ok) void deleteProject(p.id).then(onSwitched).catch(reportProjectError);
   };
 
   // Close on outside click
@@ -128,7 +128,7 @@ export default function ProjectSwitcher({ onSwitched }: { onSwitched: () => void
               <div
                 key={p.id}
                 className={`group flex items-center gap-1 px-3 py-2 hover:bg-wash cursor-pointer transition-colors ${p.id === activeId ? 'bg-accent/5' : ''}`}
-                onClick={() => { if (renamingId !== p.id && p.id !== activeId) void doSwitch(p.id); }}
+                onClick={() => { if (renamingId !== p.id && p.id !== activeId) void doSwitch(p.id).catch(reportProjectError); }}
               >
                 {renamingId === p.id ? (
                   <input
@@ -179,7 +179,7 @@ export default function ProjectSwitcher({ onSwitched }: { onSwitched: () => void
                     <button
                       title={t('switcher.archive')}
                       className="opacity-0 group-hover:opacity-100 text-ink-faint hover:text-amber-600 p-1 rounded transition-all shrink-0"
-                      onClick={(e) => { e.stopPropagation(); void setProjectArchived(p.id, true).then(onSwitched); }}
+                      onClick={(e) => { e.stopPropagation(); void setProjectArchived(p.id, true).then(onSwitched).catch(reportProjectError); }}
                       data-archive-canvas
                     >
                       <Archive size={14} strokeWidth={1.75} />
@@ -192,7 +192,7 @@ export default function ProjectSwitcher({ onSwitched }: { onSwitched: () => void
 
           <div className="border-t border-line mt-1 pt-1">
             <button
-              onClick={() => { setOpen(false); void createProject().then(onSwitched); }}
+              onClick={() => { setOpen(false); void createProject().then(onSwitched).catch(reportProjectError); }}
               className="w-full text-left px-3 py-2 text-sm text-accent hover:bg-wash transition-colors flex items-center gap-2"
             >
               <Plus size={15} strokeWidth={1.75} /> {t('switcher.newCanvas')}
