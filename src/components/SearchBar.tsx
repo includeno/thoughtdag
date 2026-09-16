@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, ChevronDown, FileText, Frame, Link2, MessageSquare, Minimize2, Search, SlidersHorizontal, StickyNote, X } from 'lucide-react';
 import { useStore } from '../store';
 import { useUiStore } from '../lib/ui-store';
-import { searchCanvas, type SearchHit } from '../lib/canvas-search';
+import { type SearchHit } from '../lib/canvas-search';
 import {
   knowledgeQueryIsActive,
-  projectKnowledgeQuery,
+  type KnowledgeQueryProjection,
   resolveKnowledgeQuery,
   type ArchivedFilter,
   type KnowledgeQuery,
@@ -52,23 +52,21 @@ function fallbackSnippet(node: ThoughtNode): string {
 
 export default function SearchBar({
   open,
+  projection,
   onClose,
   onLocate,
 }: {
   open: boolean;
+  projection: KnowledgeQueryProjection;
   onClose: () => void;
   onLocate: (nodeId: string) => void;
 }) {
   const t = useT();
   const nodes = useStore((state) => state.nodes);
-  const edges = useStore((state) => state.edges);
-  const organizationRelations = useStore((state) => state.organizationRelations);
   const taxonomy = useStore((state) => state.taxonomy);
   const activeNodeId = useUiStore((state) => state.activeNodeId);
-  const localDepth = useUiStore((state) => state.localDepth);
   const knowledgeQuery = useUiStore((state) => state.knowledgeQuery);
   const setKnowledgeQuery = useUiStore((state) => state.setKnowledgeQuery);
-  const setHitIds = useUiStore((state) => state.setSearchHitIds);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -85,44 +83,18 @@ export default function SearchBar({
     () => resolveKnowledgeQuery(knowledgeQuery, activeNodeId),
     [knowledgeQuery, activeNodeId],
   );
-  const projection = useMemo(() => {
-    if (dateInvalid) return {
-      candidateNodeIds: [], matchedNodeIds: [], visibleNodeIds: [], hits: [],
-      activeOutsideFilter: false, neighborhood: null,
-    };
-    return projectKnowledgeQuery(
-      { nodes, edges, organizationRelations },
-      effectiveQuery,
-      { activeNodeId, localDepth },
-    );
-  }, [nodes, edges, organizationRelations, effectiveQuery, activeNodeId, localDepth, dateInvalid]);
-  const result = useMemo(() => ({ nodeIds: projection.matchedNodeIds, hits: projection.hits }), [projection]);
   const matches: SearchHit[] = useMemo(() => {
-    const exact = new Map(searchCanvas(nodes, effectiveQuery.text ?? '').map((hit) => [hit.nodeId, hit]));
     const byId = new Map(nodes.map((node) => [node.id, node]));
-    return result.nodeIds.flatMap((nodeId) => {
-      const node = byId.get(nodeId);
-      if (!node) return [];
-      return [exact.get(nodeId) ?? {
-        nodeId,
-        kind: kindOf(node),
-        archived: !!node.data.archived,
-        count: result.hits.find((hit) => hit.nodeId === nodeId)?.occurrenceCount ?? 0,
-        snippet: fallbackSnippet(node),
-        matchStart: 0,
-        matchLen: 0,
-      }];
+    return projection.hits.flatMap((hit) => {
+      const node = byId.get(hit.nodeId);
+      return node ? [{ nodeId: node.id, kind: kindOf(node), archived: !!node.data.archived,
+        count: hit.occurrenceCount, ...(hit.excerpt ?? { snippet: fallbackSnippet(node), matchStart: 0, matchLen: 0 }),
+      }] : [];
     });
-  }, [nodes, effectiveQuery.text, result]);
+  }, [nodes, projection]);
+  const [limit, setLimit] = useState(SHOW_LIMIT);
   const active = knowledgeQueryIsActive(effectiveQuery);
-  const boundedCursor = Math.min(cursor, Math.max(0, matches.length - 1));
-
-  // Filters remain active when the popover closes, so switching views does
-  // not silently change the result set. "Clear filters" is the explicit exit.
-  useEffect(() => {
-    setHitIds(active && !dateInvalid ? new Set(result.nodeIds) : null);
-  }, [active, dateInvalid, result.nodeIds, setHitIds]);
-  useEffect(() => () => setHitIds(null), [setHitIds]);
+  const boundedCursor = Math.min(cursor, Math.max(0, Math.min(limit, matches.length) - 1));
 
   if (!open) return null;
 
@@ -179,7 +151,7 @@ export default function SearchBar({
             onChange={(event) => updateQuery({ text: event.target.value })}
             onKeyDown={(event) => {
               if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
-              if (event.key === 'ArrowDown') { event.preventDefault(); setCursor((current) => Math.min(current + 1, Math.max(0, matches.length - 1))); }
+              if (event.key === 'ArrowDown') { event.preventDefault(); setCursor((current) => Math.min(current + 1, Math.max(0, Math.min(limit, matches.length) - 1))); }
               if (event.key === 'ArrowUp') { event.preventDefault(); setCursor((current) => Math.max(current - 1, 0)); }
               if (event.key === 'Enter' && !isImeComposing(event) && matches[boundedCursor]) { event.preventDefault(); locate(matches[boundedCursor]); }
             }}
@@ -288,7 +260,7 @@ export default function SearchBar({
 
         {active && matches.length > 0 && (
           <ul className="border-t border-line/60 max-h-72 overflow-y-auto py-1">
-            {matches.slice(0, SHOW_LIMIT).map((match, index) => {
+            {matches.slice(0, limit).map((match, index) => {
               const Icon = KIND_ICON[match.kind];
               const node = nodes.find((item) => item.id === match.nodeId);
               const title = node?.data.linkTitle || node?.data.question || t('knowledge.untitled');
@@ -317,7 +289,7 @@ export default function SearchBar({
                 </li>
               );
             })}
-            {matches.length > SHOW_LIMIT && <li className="px-4 py-2 text-2xs text-ink-faint">{fmt(t('search.more'), { n: matches.length - SHOW_LIMIT })}</li>}
+            {matches.length > limit && <li><button onClick={() => setLimit((n) => n + SHOW_LIMIT)} className="px-4 py-2 text-xs text-accent">{t('knowledgeViews.showMore')}</button></li>}
           </ul>
         )}
         {active && matches.length === 0 && (

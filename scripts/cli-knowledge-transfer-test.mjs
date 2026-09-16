@@ -322,7 +322,51 @@ try {
   assert.deepEqual(legacy.transactions, []);
   assert.equal(legacy.revision, 0);
 
-  console.log('CLI knowledge and v2 transfer tests passed');
+  const quick = await executeCliCommand('node.create', { question: 'Mode test' });
+  assert.equal(quick.node.data.editMode, 'manual', 'CLI creation defaults to manual');
+  for (const editMode of ['manual-detail', 'ai', 'manual', 'ai', 'manual-detail', 'manual']) {
+    const before = revision();
+    const updated = await executeCliCommand('node.update', {
+      nodeId: quick.id, patch: { editMode, question: 'Preserved subject', response: 'Preserved body' },
+    });
+    assert.equal(updated.node.data.editMode, editMode);
+    assert.equal(updated.node.data.response, 'Preserved body');
+    assert.equal(revision(), before + 1, 'mode and content change in one transaction');
+    await executeCliCommand('history.undo', {});
+    await executeCliCommand('history.redo', {});
+    assert.equal(useStore.getState().nodes.find((n) => n.id === quick.id).data.editMode, editMode);
+  }
+  const listed = await executeCliCommand('node.list', {});
+  assert.equal(listed.find((n) => n.id === quick.id).editMode, 'manual');
+  for (const editMode of ['typo', null, ['ai']]) {
+    await unchangedAfterFailure('node.update', { nodeId: quick.id, patch: { editMode, question: 'Do not write' } }, /editMode/);
+    await unchangedAfterFailure('node.create', { question: 'Do not create', editMode }, /editMode/);
+  }
+  for (const kind of ['file', 'link', 'frame', 'human', 'prompt']) {
+    await unchangedAfterFailure('node.create', { kind, url: 'https://example.com', editMode: 'ai' }, /does not support/);
+  }
+  await unchangedAfterFailure('node.regenerate', { nodeId: quick.id }, /Switch editMode/);
+  await unchangedAfterFailure('question.ask', { question: 'Do not generate', editMode: 'manual-detail' }, /requires ai/);
+  const noteToAI = await executeCliCommand('node.create', { kind: 'note', question: 'Legacy note', response: 'Body', editMode: 'ai' });
+  assert.equal(noteToAI.node.data.stepKind, undefined);
+  assert.equal(noteToAI.node.data.response, 'Body');
+  await executeCliCommand('node.update', { nodeId: noteToAI.id, patch: { editMode: 'manual-detail' } });
+  useStore.setState({ nodes: useStore.getState().nodes.map((n) => n.id === noteToAI.id ? { ...n, data: { ...n.data, isLoading: true } } : n) });
+  await unchangedAfterFailure('node.update', { nodeId: noteToAI.id, patch: { editMode: 'manual' } }, /Stop generation/);
+  useStore.setState({ nodes: useStore.getState().nodes.map((n) => n.id === noteToAI.id ? { ...n, data: { ...n.data, isLoading: false } } : n) });
+  const modeExport = JSON.parse(JSON.stringify(await executeCliCommand('canvas.export', {})));
+  const modeImport = parseCliProjectImport(modeExport);
+  assert.equal(modeImport.nodes.find((n) => n.id === quick.id).data.editMode, 'manual');
+  assert.equal(modeImport.nodes.find((n) => n.id === noteToAI.id).data.editMode, 'manual-detail');
+  const { buildViewerLink, decodeViewerHash } = await vite.ssrLoadModule('/src/lib/viewer.ts');
+  const viewer = await decodeViewerHash(new URL(await buildViewerLink(modeImport.nodes, modeImport.edges)).hash);
+  assert.equal(viewer.nodes.find((n) => n.id === quick.id).data.editMode, 'manual');
+  assert.equal(viewer.nodes.find((n) => n.id === noteToAI.id).data.editMode, 'manual-detail');
+  const invalidMode = structuredClone(modeExport);
+  invalidMode.nodes[0].data.editMode = 'wrong';
+  assert.throws(() => parseCliProjectImport(invalidMode), /editMode/);
+
+  console.log('CLI knowledge, three edit modes and v2 transfer tests passed');
 } finally {
   await vite.close();
 }

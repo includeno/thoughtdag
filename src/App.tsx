@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
@@ -17,6 +18,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import 'highlight.js/styles/github.css';
 import { ArrowRight, BookOpen, Bot, Brain, CircleDot, CircleHelp, Download, Drama, Eye, FileText, FolderSync, Frame, GitBranch, Highlighter, ImageDown, KeyRound, LayoutGrid, ListRestart, ListTree, Loader2, MessageCircleQuestion, Minimize2, MoreHorizontal, PanelsTopLeft, Paperclip, Redo2, Rewind, Scissors, Search, Share2, SquareTerminal, Stethoscope, StickyNote, Trash2, Undo2, Workflow, X } from 'lucide-react';
+import EditModeSelect from './components/ui/EditModeSelect';
 import './index.css';
 import ThoughtNode from './components/ThoughtNode';
 import ParadigmNode from './components/ParadigmNode';
@@ -35,7 +37,7 @@ import MaterialReader from './components/MaterialReader';
 import ProjectSwitcher from './components/ProjectSwitcher';
 import SessionAtlas from './components/SessionAtlas';
 import { useStore } from './store';
-import { useProjects, adoptImportedProject, markInstantiatedFrom } from './store/projects';
+import { useProjects, reportProjectError, adoptImportedProject, markInstantiatedFrom } from './store/projects';
 import { projectStorageKey } from './store/projects';
 import { set as idbSet } from 'idb-keyval';
 import { instantiateParadigm } from './lib/paradigm';
@@ -203,7 +205,7 @@ export default function App() {
 }
 
 function Canvas() {
-  const { nodes, edges, organizationRelations, setNodes, setEdges, addQuestion, undo, redo, addCrossLink, setSelectedNodeId, setSelectedNodeIds, history, historyIndex, relayout } = useStore();
+  const { nodes, edges, organizationRelations, setNodes, setEdges, addQuestion, undo, redo, addCrossLink, setSelectedNodeId, setSelectedNodeIds, history, historyIndex, relayout } = useStore(useShallow((state) => ({ nodes: state.nodes, edges: state.edges, organizationRelations: state.organizationRelations, setNodes: state.setNodes, setEdges: state.setEdges, addQuestion: state.addQuestion, undo: state.undo, redo: state.redo, addCrossLink: state.addCrossLink, setSelectedNodeId: state.setSelectedNodeId, setSelectedNodeIds: state.setSelectedNodeIds, history: state.history, historyIndex: state.historyIndex, relayout: state.relayout })));
   const t = useT();
   const setTutorialOpen = useUiStore((s) => s.setTutorialOpen);
   const annotationsHidden = useUiStore((s) => s.annotationsHidden);
@@ -217,6 +219,8 @@ function Canvas() {
   const selectedOrganizationRelationId = useUiStore((s) => s.selectedOrganizationRelationId);
   const setSelectedOrganizationRelationId = useUiStore((s) => s.setSelectedOrganizationRelationId);
   const [inputValue, setInputValue] = useState('');
+  const [recordBody, setRecordBody] = useState('');
+  const [newEditMode, setNewEditMode] = useState<'manual' | 'manual-detail' | 'ai'>('manual');
   const [searchOpen, setSearchOpen] = useState(false);
   const [rootRole, setRootRole] = useState('');
   const [showRootRole, setShowRootRole] = useState(false);
@@ -398,15 +402,14 @@ function Canvas() {
     return ok;
   }, []);
 
-  // Ask node: an ordinary Q&A node dropped EMPTY — wire material in, then
-  // type the question; it answers from whatever the edges carry.
+  // Empty nodes start with manual entry; AI generation is an explicit mode.
   const spawnAskNode = useCallback((pos: { x: number; y: number }): string => {
     const st = useStore.getState();
     const id = generateId();
     st.setNodes([...st.nodes, {
       id, type: 'thought', position: pos, dragHandle: '.drag-handle',
       data: {
-        question: '', response: '', responses: [], responseIndex: -1,
+        question: '', response: '', responses: [], responseIndex: -1, editMode: 'manual',
         isCollapsed: false, isEditing: false, isEditingResponse: false, isLoading: false,
         tokenCount: 0, highlights: [], highlightMode: 'tag',
         attachments: [], excludedAttachmentIds: [], includedAttachmentIds: [],
@@ -743,9 +746,11 @@ function Canvas() {
     const handleKeyDown = (e: KeyboardEvent) => {
       // While the confirm dialog is open it owns the keyboard
       if (useUiStore.getState().confirmRequest) return;
+      const target = e.target as HTMLElement;
+      const inField = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
       // Viewer: only Cmd+F search survives; every mutating shortcut is inert
       if (isViewerMode && !((e.metaKey || e.ctrlKey) && e.key === 'f')) return;
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+      if (!inField && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         if (e.shiftKey) { e.preventDefault(); redo(); }
         else { e.preventDefault(); undo(); }
       }
@@ -756,8 +761,6 @@ function Canvas() {
         return;
       }
       {
-        const target = e.target as HTMLElement;
-        const inField = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
         if (!inField && selectedNodeId && !isParadigm && !e.metaKey && !e.ctrlKey && !e.altKey) {
           const { nodes: ns, edges: es } = useStore.getState();
           // Space: collapse/expand the selected node
@@ -845,10 +848,13 @@ function Canvas() {
   const handleSubmit = () => {
     if (!inputValue.trim()) return;
     addQuestion(inputValue.trim(), {
+      editMode: newEditMode,
+      initialResponse: recordBody,
       rolePrompt: rootRole.trim() || undefined,
       initialAttachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,
     });
     setInputValue('');
+    setRecordBody('');
     setRootRole('');
     setShowRootRole(false);
     setPendingAttachments([]);
@@ -1310,7 +1316,7 @@ function Canvas() {
           position="bottom-right"
         />}
       </ReactFlow>
-      <KnowledgeViews onSearch={() => setSearchOpen(true)} onLocate={(id) => {
+      <KnowledgeViews projection={knowledgeProjection} onSearch={() => setSearchOpen(true)} onLocate={(id) => {
         const node = useStore.getState().nodes.find((item) => item.id === id);
         if (!node) return;
         setSelectedNodeId(id);
@@ -1408,11 +1414,21 @@ function Canvas() {
                   const files = Array.from(e.clipboardData.items).filter(i => i.kind === 'file').map(i => i.getAsFile()!).filter(Boolean);
                   if (files.length) handleFileUpload(files);
                 }}
-                placeholder={t('landing.placeholder')}
+                placeholder={t(newEditMode === 'ai' ? 'landing.placeholder' : newEditMode === 'manual-detail' ? 'editMode.subjectPlaceholder' : 'editMode.placeholder')}
                 className="w-full bg-transparent text-ink text-sm leading-relaxed resize-none focus:outline-none placeholder-ink-faint"
                 rows={3}
                 autoFocus
               />
+              {newEditMode === 'manual-detail' && (
+                <textarea
+                  aria-label={t('editMode.body')}
+                  value={recordBody}
+                  onChange={(event) => setRecordBody(event.target.value)}
+                  placeholder={t('editMode.bodyPlaceholder')}
+                  className="w-full mt-2 bg-wash rounded-lg p-3 text-ink text-sm leading-relaxed resize-y focus:outline-none focus:ring-1 focus:ring-accent/40"
+                  rows={4}
+                />
+              )}
               {/* Pending attachments preview */}
               {pendingAttachments.length > 0 && (
                 <div className="flex flex-wrap gap-2 mt-2 pb-1">
@@ -1436,7 +1452,7 @@ function Canvas() {
               )}
               {/* Role area: opened from the tray icon — an ask-time option,
                   not a decision the landing asks you to make up front */}
-              {showRootRole && (
+              {newEditMode === 'ai' && showRootRole && (
                 <div className="space-y-1 mt-2">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-ink-muted font-medium">{t('landing.roleLabel')}</span>
@@ -1454,8 +1470,10 @@ function Canvas() {
                 </div>
               )}
               <div className="flex items-center justify-end mt-2 gap-2">
-                <SearchToggles />
+                <EditModeSelect value={newEditMode} onChange={setNewEditMode} />
+                {newEditMode === 'ai' && <SearchToggles />}
                 <button
+                  hidden={newEditMode !== 'ai'}
                   onClick={() => setShowRootRole(!showRootRole)}
                   title={t('landing.roleTrayTitle')}
                   className={`rounded-full w-8 h-8 flex items-center justify-center transition-colors shrink-0 ${
@@ -1484,7 +1502,7 @@ function Canvas() {
                   disabled={!inputValue.trim() || pendingAttachments.some(a => a.isExtracting)}
                   className="bg-accent hover:bg-accent-strong disabled:opacity-30 disabled:cursor-not-allowed text-white text-sm px-5 py-2 rounded-xl transition-all"
                 >
-                  {pendingAttachments.some(a => a.isExtracting) ? t('landing.extracting') : t('landing.send')}
+                  {pendingAttachments.some(a => a.isExtracting) ? t('landing.extracting') : t(newEditMode === 'ai' ? 'landing.send' : 'editMode.save')}
                 </button>
               </div>
             </div>
@@ -1716,7 +1734,7 @@ function Canvas() {
               <SquareTerminal size={14} strokeWidth={1.75} /> {t('paradigm.addPrompt')}
             </button>
             <button
-              onClick={() => void instantiate()}
+              onClick={() => void instantiate().catch(reportProjectError)}
               title={t('paradigm.instantiateTitle')}
               className="bg-ink text-white rounded-lg h-8 px-3 flex items-center gap-1.5 shadow-sm hover:bg-ink/85 transition-colors text-xs font-medium"
             >
@@ -2084,7 +2102,8 @@ function Canvas() {
       {multiSelected && !isViewerMode && <SelectionToolbar />}
 
       {/* Cmd+F node search */}
-      <SearchBar
+      {searchOpen && <SearchBar
+        projection={knowledgeProjection}
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
         onLocate={(id) => {
@@ -2099,7 +2118,7 @@ function Canvas() {
           }
           // search stays open: the filter is a browsing mode, Esc ends it
         }}
-      />
+      />}
 
       {/* Edge context menu */}
       {nodeMenu && (

@@ -1,3 +1,5 @@
+import { hasValidResponseVersions } from './response-versions';
+import { hasValidEditMode } from './edit-mode';
 import type { ThoughtNode, ThoughtEdge, OrganizationRelation } from '../types';
 import type { ProjectTaxonomy } from '../store/types';
 
@@ -79,7 +81,11 @@ export async function buildViewerLink(
 export async function decodeViewerHash(hash: string): Promise<ViewerPayload> {
   const packed = b64url.decode(hash.replace(/^#view=/, ''));
   const bytes = await pipe(packed, new DecompressionStream('deflate-raw'));
-  return JSON.parse(new TextDecoder().decode(bytes)) as ViewerPayload;
+  const payload = JSON.parse(new TextDecoder().decode(bytes)) as ViewerPayload;
+  if (!Array.isArray(payload.nodes) || payload.nodes.some((node) => !node.data || !(hasValidEditMode(node.data) && hasValidResponseVersions(node.data)))) {
+    throw new Error('Viewer contains an invalid node editMode');
+  }
+  return payload;
 }
 
 /** Boot path for viewer mode: silence persistence, then load the graph from

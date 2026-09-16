@@ -10,6 +10,11 @@ const EMPTY_SNAPSHOT: Snapshot = {
   taxonomy: { tags: [], nodeTypes: [] },
 };
 
+function hasDraft(state: StoreState): boolean {
+  return state.nodes.some(node => node.data.isLoading || node.data.restreaming
+    || node.data.attachments.some(attachment => attachment.isExtracting));
+}
+
 function historyMirror(snapshot: Snapshot, undoCount: number, redoCount: number): Snapshot[] {
   // Compatibility surface for the existing toolbar/debug API. Entries share
   // one immutable snapshot; durable undo data lives in transactions below.
@@ -39,6 +44,10 @@ export const createHistorySlice: StateCreator<StoreState, [], [], HistorySlice> 
 
   pushHistory: (label = 'canvas.change') => {
     const state = get();
+    // ponytail: concurrent generations form one history batch; per-command
+    // draft isolation is only needed if editing during generation needs its
+    // own Undo step. Never make a partial response a committed answer.
+    if (hasDraft(state)) return;
     const after = snapshotOf(state);
     const before = state.history[state.historyIndex] ?? state.history.at(-1) ?? EMPTY_SNAPSHOT;
     const transaction = createTransaction(before, after, {
@@ -64,7 +73,7 @@ export const createHistorySlice: StateCreator<StoreState, [], [], HistorySlice> 
   },
 
   undo: () => {
-    if (condenseGuard()) return;
+    if (condenseGuard() || hasDraft(get())) return;
     // Commit a legacy/pre-only mutation before undoing so every reachable UI
     // path still becomes a durable transaction.
     get().pushHistory('canvas.pending');
@@ -105,7 +114,8 @@ export const createHistorySlice: StateCreator<StoreState, [], [], HistorySlice> 
   },
 
   redo: () => {
-    if (condenseGuard()) return;
+    if (condenseGuard() || hasDraft(get())) return;
+    get().pushHistory('canvas.pending');
     const state = get();
     const targetId = state.redoableTransactionIds.at(-1);
     if (!targetId) return;

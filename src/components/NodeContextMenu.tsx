@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { Archive, ArchiveRestore, BookOpen, CircleDot, Copy, Files, FlaskConical, GitFork, Maximize2, RefreshCw, StickyNote, Tags, Trash2, UserRoundPlus } from 'lucide-react';
 import { useStore } from '../store';
 import { useUiStore, confirmDialog, toast } from '../lib/ui-store';
+import EditModeSelect from './ui/EditModeSelect';
+import { nodeEditMode } from '../lib/edit-mode';
 import { recapToNote } from '../lib/recap';
 import { useT, fmt, t as ti } from '../i18n';
 
@@ -28,11 +30,12 @@ export default function NodeContextMenu({ x, y, nodeId, onClose }: {
 
   if (!node) return null;
   const kind = node.data.stepKind;
+  const mode = nodeEditMode(node.data);
   const isContent = !!kind; // note / file / link / frame
-  const hasResponse = !isContent && !!node.data.response && !node.data.isLoading;
+  const hasResponse = !isContent && mode !== 'manual' && !!node.data.response && !node.data.isLoading;
   const copyText = isContent
     ? (kind === 'note' || kind === 'link' ? node.data.question : '')
-    : node.data.response;
+    : mode === 'manual' ? node.data.question : node.data.response;
 
   const item = 'w-full text-left px-3 py-2 text-xs text-ink hover:bg-wash transition-colors flex items-center gap-2.5';
   const icon = 'text-ink-faint shrink-0';
@@ -47,6 +50,7 @@ export default function NodeContextMenu({ x, y, nodeId, onClose }: {
 
   return createPortal((
     <div ref={ref} className="fixed z-[70] bg-card border border-line rounded-xl shadow-lg py-1 w-[200px] animate-fade-in" style={{ left, top }}>
+      {mode && <div className="px-3 py-2"><EditModeSelect value={mode} disabled={node.data.isLoading} onChange={(next) => { useStore.getState().setNodeEditMode(nodeId, next); onClose(); }} /></div>}
       {!isContent && (
         <button className={item} onClick={run(() => {
           useStore.getState().setSelectedNodeId(nodeId);
@@ -81,12 +85,12 @@ export default function NodeContextMenu({ x, y, nodeId, onClose }: {
           <Maximize2 size={14} strokeWidth={1.75} className={icon} /> {t('ctx.readingView')}
         </button>
       )}
-      {hasResponse && (
+      {hasResponse && mode === 'ai' && (
         <button className={item} onClick={run(() => { void useStore.getState().rerunNode(nodeId); })}>
           <RefreshCw size={14} strokeWidth={1.75} className={icon} /> {t('ctx.rerun')}
         </button>
       )}
-      {hasResponse && (
+      {hasResponse && mode === 'ai' && (
         <button className={item} title={ti('actions.regenBranchTitle')} onClick={run(() => { void useStore.getState().regenerate(nodeId); })}>
           <GitFork size={14} strokeWidth={1.75} className={icon} /> {t('ctx.regenBranch')}
         </button>

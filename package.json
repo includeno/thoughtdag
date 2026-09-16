@@ -10,6 +10,9 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "smoke": "node scripts/smoke.mjs",
+    "test:architecture": "node scripts/test-architecture.mjs",
+    "test:design": "node scripts/test-design-fixes.mjs",
+    "test:browser": "node scripts/test-browser-boundaries.mjs",
     "test:layout": "node scripts/test-layout.mjs",
     "preview": "vite preview",
     "docs:dev": "vitepress dev docs",
@@ -83,7 +86,7 @@
   "description": "An infinite canvas where LLM conversations grow into an editable thought graph. Read papers into maps; every answer knows where it came from.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/chenxiachan/thoughtdag.git"
+    "url": "https://github.com/includeno/thoughtdag.git"
   },
   "keywords": [
     "llm",

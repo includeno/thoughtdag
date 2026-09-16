@@ -14,7 +14,7 @@ import { createAttachmentSlice } from './slices/attachments';
 import { createEvaluatorSlice } from './slices/evaluator';
 import { createEventSlice } from './slices/events';
 import { createKnowledgeSlice } from './slices/knowledge';
-import { snapshotOf, trimTransactionLog } from '../lib/transactions';
+import { createTransaction, snapshotOf, trimTransactionLog } from '../lib/transactions';
 
 // Reset transient UI flags — applied both when persisting and when rehydrating,
 // so a refresh mid-stream/mid-edit never restores a node stuck in loading state.
@@ -33,6 +33,7 @@ export function stripTransient(nodes: ThoughtNode[]): ThoughtNode[] {
       data: {
         ...n.data,
         isLoading: false,
+        generationFailed: n.data.isLoading || n.data.restreaming ? true : n.data.generationFailed,
         isEditing: false,
         isEditingResponse: false,
         restreaming: undefined,
@@ -69,6 +70,7 @@ export const useStore = create<StoreState>()(persist((...a) => ({
   // compatibility `history` mirror and selection remain session-scoped; full
   // graph snapshots never enter IndexedDB.
   partialize: (state): PersistedState => ({
+    ...(graphHasInFlightWork(state) ? { draftBaseline: state.history[state.historyIndex] } : {}),
     nodes: stripTransient(state.nodes),
     edges: state.edges.map((e) => (e.selected ? { ...e, selected: false } : e)),
     events: state.events,
@@ -82,6 +84,7 @@ export const useStore = create<StoreState>()(persist((...a) => ({
   migrate: (persisted): PersistedState => {
     const state = (persisted ?? {}) as Partial<PersistedState>;
     return {
+      draftBaseline: state.draftBaseline,
       nodes: state.nodes ?? [],
       edges: state.edges ?? [],
       events: state.events ?? [],
@@ -117,11 +120,22 @@ export const useStore = create<StoreState>()(persist((...a) => ({
       p.undoableTransactionIds ?? [],
       p.redoableTransactionIds ?? [],
     );
-    const revision = p.revision ?? trimmed.transactions.reduce(
+    let revision = p.revision ?? trimmed.transactions.reduce(
       (highest, transaction) => Math.max(highest, transaction.afterRevision ?? 0),
       0,
     );
     const snapshot = snapshotOf({ nodes, edges, organizationRelations, taxonomy });
+    if (p.draftBaseline) {
+      const recovered = createTransaction(p.draftBaseline, snapshot, {
+        label: 'canvas.recover-draft', beforeRevision: revision, afterRevision: revision + 1,
+      });
+      if (recovered) {
+        trimmed.transactions = [...trimmed.transactions, recovered];
+        trimmed.undoableIds = [...trimmed.undoableIds, recovered.id];
+        trimmed.redoableIds = [];
+        revision = recovered.afterRevision;
+      }
+    }
     const history = Array.from(
       { length: trimmed.undoableIds.length + trimmed.redoableIds.length + 1 },
       () => snapshot,

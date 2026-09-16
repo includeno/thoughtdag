@@ -181,6 +181,89 @@ try {
   useStore.setState({ nodes: [{ ...busyNode, data: { ...busyNode.data, isLoading: false } }] });
   flushPendingTransaction();
 
+  // Editing mode is durable and independent of taxonomy, wires and answer history.
+  await useStore.getState().addQuestion('Manual draft', { editMode: 'manual' });
+  const manualId = useStore.getState().selectedNodeId;
+  const currentNode = () => useStore.getState().nodes.find((n) => n.id === manualId);
+  assert.equal(currentNode().data.editMode, 'manual');
+  assert.equal(currentNode().data.isLoading, false);
+  assert.equal(currentNode().data.response, '');
+  await useStore.getState().editQuestion(manualId, 'Saved without AI');
+  assert.equal(currentNode().data.question, 'Saved without AI');
+  assert.equal(currentNode().data.isLoading, false);
+  assert.ok(currentNode().data.tokenCount > 0);
+  await useStore.getState().rerunNode(manualId, { auto: true });
+  assert.equal(currentNode().data.response, '', 'automatic replay cannot generate on a manual node');
+  const graphBeforeMode = useStore.getState();
+  useStore.getState().setNodeEditMode(manualId, 'ai');
+  assert.equal(currentNode().data.editMode, 'ai');
+  assert.equal(currentNode().data.isLoading, false, 'switching alone never generates');
+  assert.equal(currentNode().data.question, 'Saved without AI');
+  assert.equal(useStore.getState().edges, graphBeforeMode.edges);
+  assert.equal(useStore.getState().taxonomy, graphBeforeMode.taxonomy);
+  useStore.getState().undo();
+  assert.equal(currentNode().data.editMode, 'manual');
+  useStore.getState().redo();
+  assert.equal(currentNode().data.editMode, 'ai');
+  await flushPendingWrites();
+  await useStore.persist.rehydrate();
+  assert.equal(currentNode().data.editMode, 'ai', 'mode survives rehydration');
+
+  const answered = { ...currentNode(), data: {
+    ...currentNode().data, response: 'Prior answer', responses: ['Prior answer'], responseIndex: 0,
+    tagIds: ['tag-1'], customTypeId: 'type-1', attachments: [{ id: 'att-1', content: 'Original attachment' }],
+  } };
+  useStore.setState({ nodes: useStore.getState().nodes.map((n) => n.id === manualId ? answered : n) });
+  useStore.getState().setNodeEditMode(manualId, 'manual');
+  await useStore.getState().editQuestion(manualId, 'Revised manually');
+  for (const key of ['response', 'responses', 'attachments', 'tagIds', 'customTypeId']) {
+    assert.deepEqual(currentNode().data[key], answered.data[key], `mode switch preserves ${key}`);
+  }
+  assert.equal(currentNode().data.questions[0], 'Saved without AI', 'prior answer keeps its original question');
+
+  await useStore.getState().addQuestion('A structured subject', { editMode: 'manual-detail', initialResponse: 'Initial details' });
+  const structuredId = useStore.getState().selectedNodeId;
+  const structured = () => useStore.getState().nodes.find((n) => n.id === structuredId);
+  assert.equal(structured().data.response, 'Initial details');
+  assert.deepEqual(structured().data.responses, ['Initial details']);
+  assert.equal(structured().data.responseIndex, 0);
+  await useStore.getState().editQuestion(structuredId, 'An edited subject');
+  await useStore.getState().rerunNode(structuredId, { auto: true });
+  assert.equal(structured().data.isLoading, false);
+  assert.equal(structured().data.response, 'Initial details', 'structured edits and automatic replay never generate');
+  useStore.getState().setNodeEditMode(structuredId, 'manual');
+  assert.equal(structured().data.response, 'Initial details', 'compact presentation preserves the body');
+  useStore.getState().setNodeEditMode(structuredId, 'manual-detail');
+  useStore.getState().editResponse(structuredId, 'Revised details');
+  assert.deepEqual(structured().data.responses, ['Revised details']);
+  assert.equal(structured().data.questions[0], 'An edited subject', 'manual body edits keep the active subject/body pair together');
+  await flushPendingWrites();
+  await useStore.persist.rehydrate();
+  assert.equal(structured().data.editMode, 'manual-detail');
+  assert.equal(structured().data.response, 'Revised details');
+
+  await useStore.getState().addQuestion('Empty body', { editMode: 'manual-detail' });
+  const blankId = useStore.getState().selectedNodeId;
+  useStore.getState().editResponse(blankId, 'First written body');
+  const written = useStore.getState().nodes.find((n) => n.id === blankId);
+  assert.equal(written.data.responseIndex, 0);
+  assert.deepEqual(written.data.responses, ['First written body']);
+  assert.deepEqual(written.data.questions, ['Empty body']);
+  useStore.getState().undo();
+  assert.equal(useStore.getState().nodes.find((n) => n.id === blankId).data.response, '');
+  useStore.getState().redo();
+  assert.equal(useStore.getState().nodes.find((n) => n.id === blankId).data.response, 'First written body');
+
+  const noteId = useStore.getState().nodes.find((n) => n.data.stepKind === 'note').id;
+  const noteBefore = useStore.getState().nodes.find((n) => n.id === noteId);
+  useStore.getState().setNodeEditMode(noteId, 'ai');
+  const converted = useStore.getState().nodes.find((n) => n.id === noteId);
+  assert.equal(converted.data.stepKind, undefined);
+  assert.equal(converted.data.editMode, 'ai');
+  assert.equal(converted.data.question, noteBefore.data.question);
+  useStore.getState().undo();
+  assert.equal(useStore.getState().nodes.find((n) => n.id === noteId).data.stepKind, 'note');
+
   console.log('Transaction durability boundary tests passed');
 } finally {
   await vite.close();

@@ -21,7 +21,7 @@ The result shown here is the command's `result` value after terminal success. Th
 ### `node.list`
 
 - Args: none.
-- Result: compact nodes with `{ id, kind, question, response, position, archived, attachments }`. Each attachment is reduced to `{ id, name, type, size }`.
+- Result: compact nodes with `{ id, kind, editMode, question, response, position, archived, attachments }`. Each attachment is reduced to `{ id, name, type, size }`.
 - Notes: read-only; use this to resolve IDs without returning the full canvas.
 
 ### `node.get`
@@ -63,6 +63,7 @@ The result shown here is the command's `result` value after terminal success. Th
   - optional `kind`: `ask` (default), `note`, `file`, `link`, `frame`, `human`, or `prompt`;
   - optional `position: { x, y }`, with non-finite/missing coordinates falling back to `120,80`;
   - optional `question` or alias `text`; optional `response`;
+  - optional `editMode`: `manual` (Quick note, default for ask/note), `manual-detail` (Structured note), or `ai` (AI conversation); other node kinds reject this field;
   - `link` requires non-empty `url`;
   - optional `parentId` and `relation` for a new incoming edge;
   - ask/human/prompt may use `instruction`, `rolePrompt`;
@@ -78,11 +79,12 @@ The result shown here is the command's `result` value after terminal success. Th
   - strings: `question`, `response`;
   - string or null: `instruction`, `rolePrompt`, `model`, `frameColor`, `linkUrl`, `linkTitle`;
   - booleans: `isCollapsed`, `archived`, `frameCarry`, `webSearch`, `scholarSearch`, `autoRerun`;
-  - enums: `roleMode` = `inherit|set-next|reset`; `highlightMode` = `off|tag|filter`;
+  - enums: `editMode` = `manual|manual-detail|ai` (ordinary/note nodes only); `roleMode` = `inherit|set-next|reset`; `highlightMode` = `off|tag|filter`;
   - integer: `autoRerunRounds` from 1 through 5;
   - positive finite node dimensions: `width`, `height`.
 - Result: `{ id, node }`.
 - Side effects: one undoable graph change. Response edits update the selected response version, edit timestamp, token count, derived summaries, and prune invalid highlights. Question edits update timestamps/version-question association. Setting archived false clears archival fields.
+- Mode changes preserve content, versions, attachments and classification; note nodes become ordinary nodes when switched to structured or AI mode. Switching while generating fails. Creation and updates never generate; use `question.ask` or `node.regenerate` explicitly. Missing editMode on legacy ordinary nodes means AI; legacy notes mean manual.
 - Notes: unlisted patch fields are ignored after validation of known fields.
 
 ### `node.move`
@@ -176,14 +178,14 @@ The result shown here is the command's `result` value after terminal success. Th
 
 - Args: required non-empty `question`; optional `parentId`, `branchContext`, `rolePrompt`; optional `inheritRole` (false only when exactly false); optional `mentions` array, whose values are string-coerced.
 - Result: compact finished node.
-- Side effects: creates a question node synchronously, then runs generation. Registers a stop handler for the created node.
+- Side effects: creates an AI question node synchronously, then runs generation. An explicit `editMode` other than `ai` is rejected. Registers a stop handler for the created node.
 - Failure: if generation marks the node failed, returns its response text as the error, falling back to `Generation failed`.
 
 ### `node.regenerate`
 
 - Args: required `nodeId`.
 - Result: compact finished node.
-- Side effects: reruns the node and registers a stop handler.
+- Side effects: reruns the node and registers a stop handler. Manual modes, ineligible node kinds, blank questions and already-generating nodes are rejected.
 
 ### `generation.stop`
 

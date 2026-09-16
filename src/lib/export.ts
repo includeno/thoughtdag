@@ -1,3 +1,5 @@
+import { hasValidResponseVersions } from './response-versions';
+import { hasValidEditMode } from './edit-mode';
 import { set as idbSet } from 'idb-keyval';
 import { flushPendingTransaction, useStore, stripTransient } from '../store';
 import { getModelsOnce, reconcileModelId } from './use-models';
@@ -180,7 +182,7 @@ function looksLikeCanvasNodes(nodes: unknown[]): boolean {
     const node = n as Partial<ThoughtNode>;
     return !!node && typeof node.id === 'string'
       && !!node.position && typeof node.position.x === 'number' && typeof node.position.y === 'number'
-      && !!node.data && typeof node.data === 'object';
+      && !!node.data && typeof node.data === 'object' && (hasValidEditMode(node.data) && hasValidResponseVersions(node.data));
   });
 }
 
@@ -269,6 +271,7 @@ function validateTransactionNode(value: unknown, name: string): ThoughtNode {
     || !node.data || typeof node.data !== 'object') {
     throw new Error(`${name} is not a valid canvas node`);
   }
+  if (!(hasValidEditMode(node.data) && hasValidResponseVersions(node.data))) throw new Error(`${name} has an invalid editMode`);
   if (node.data.tagIds !== undefined
     && (!Array.isArray(node.data.tagIds)
       || node.data.tagIds.some((id) => typeof id !== 'string' || !id.trim()))) {
@@ -466,18 +469,19 @@ export async function importProjectFromFile(file: File, pre?: unknown): Promise<
   try {
     if (!parsed.sharedReadonly && isV2) {
       events = parseCanvasEvents(parsed.events);
-      ledger = parseTransactionLedger(extended, {
+      const validators = {
         node: validateTransactionNode,
         edge: validateTransactionEdge,
         organizationRelation: validateTransactionOrganizationRelation,
         taxonomy: validateTransactionTaxonomy,
-      });
+      };
+      ledger = parseTransactionLedger(extended, validators);
       validateTransactionHistory(ledger.transactions, {
         nodes: normalizedNodes,
         edges: parsed.edges,
         organizationRelations,
         taxonomy,
-      });
+      }, validators);
     } else if (!parsed.sharedReadonly && Array.isArray(parsed.events)) {
       // v1 migration preserves the legacy event array verbatim. It had no
       // transaction ledger and may contain operations unknown to v2.

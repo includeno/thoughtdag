@@ -57,7 +57,13 @@ export default function ResponseSection({
     onFocusNode?.(childId);
   };
 
-  const [editResponseValue, setEditResponseValue] = useState('');
+  const isStructured = data.editMode === 'manual-detail';
+  const [editResponseValue, setEditResponseValue] = useState(data.response);
+  const [savedResponse, setSavedResponse] = useState(data.response);
+  if (savedResponse !== data.response) {
+    setSavedResponse(data.response);
+    setEditResponseValue(data.response);
+  }
   const [selectedText, setSelectedText] = useState('');
   const [selectionPos, setSelectionPos] = useState<{ x: number; y: number } | null>(null);
   const responseRef = useRef<HTMLDivElement>(null);
@@ -139,14 +145,14 @@ export default function ResponseSection({
 
   // No response yet and nothing in flight (e.g. a fresh ask node or a
   // paradigm human turn) — the card would be an empty box, so skip it.
-  if (!data.response && !data.isLoading && !data.isEditingResponse && !data.generationFailed) {
+  if (data.editMode === 'manual' || (!isStructured && !data.response && !data.isLoading && !data.isEditingResponse && !data.generationFailed)) {
     return null;
   }
 
   return (
     <div className="panel-card px-4 py-3">
       <div className="flex items-center justify-between mb-1.5">
-        <label className="text-2xs font-semibold text-green-600">{t('panel.response')}</label>
+        <label className="text-2xs font-semibold text-green-600">{t(isStructured ? 'editMode.body' : 'panel.response')}</label>
         {(data.response || data.isLoading) && (
           <button
             onClick={() => useUiStore.getState().setResponseViewerNodeId(nodeId)}
@@ -177,9 +183,11 @@ export default function ResponseSection({
           <Markdown base={data.importSource?.cwd}>{data.response}</Markdown>
           <span className="inline-block w-2 h-4 bg-accent animate-pulse rounded-sm ml-0.5 align-text-bottom" />
         </div>
-      ) : data.isEditingResponse ? (
+      ) : (data.isEditingResponse || (isStructured && !data.response)) && !isViewerMode ? (
         <div>
           <textarea
+            aria-label={isStructured ? t('editMode.body') : t('panel.response')}
+            placeholder={isStructured ? t('editMode.bodyPlaceholder') : undefined}
             value={editResponseValue}
             onChange={(e) => setEditResponseValue(e.target.value)}
             onKeyDown={handleResponseEditKeyDown}
@@ -241,7 +249,7 @@ export default function ResponseSection({
           the header's ⋯ menu */}
       {data.response && !data.isLoading && !data.isEditingResponse && !data.generationFailed && (
         <div className="mt-2 flex items-center gap-0.5 text-ink-faint">
-          {!isViewerMode && <button
+          {(data.editMode ?? 'ai') === 'ai' && !isViewerMode && <button
             onClick={() => void rerunNode(nodeId, {})}
             className="rounded-full w-7 h-7 flex items-center justify-center hover:text-accent hover:bg-wash transition-colors"
             title={t('common.regenerate')}
@@ -275,9 +283,9 @@ export default function ResponseSection({
           )}
           {hasMultipleVersions && (
             <div className="flex items-center gap-1 text-xs text-ink-muted ml-1">
-              <button onClick={() => navigateVersion(nodeId, 'prev')} className="hover:text-accent hover:bg-wash rounded-full w-5 h-5 flex items-center justify-center transition-colors"><ChevronLeft size={14} strokeWidth={1.75} /></button>
+              <button aria-label={t('common.previousVersion')} onClick={() => navigateVersion(nodeId, 'prev')} className="hover:text-accent hover:bg-wash rounded-full w-5 h-5 flex items-center justify-center transition-colors"><ChevronLeft size={14} strokeWidth={1.75} /></button>
               <span className="text-accent font-medium">v{data.responseIndex + 1}/{data.responses.length}</span>
-              <button onClick={() => navigateVersion(nodeId, 'next')} className="hover:text-accent hover:bg-wash rounded-full w-5 h-5 flex items-center justify-center transition-colors"><ChevronRight size={14} strokeWidth={1.75} /></button>
+              <button aria-label={t('common.nextVersion')} onClick={() => navigateVersion(nodeId, 'next')} className="hover:text-accent hover:bg-wash rounded-full w-5 h-5 flex items-center justify-center transition-colors"><ChevronRight size={14} strokeWidth={1.75} /></button>
               {!isViewerMode && <button
                 onClick={() => deleteVersion(nodeId, data.responseIndex)}
                 className="text-ink-faint hover:text-red-500 hover:bg-red-50 rounded-full w-5 h-5 flex items-center justify-center transition-colors"

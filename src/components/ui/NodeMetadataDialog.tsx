@@ -5,6 +5,9 @@ import { confirmDialog, useUiStore } from '../../lib/ui-store';
 import { fmt, t as ti, useT } from '../../i18n';
 import { isImeComposing } from '../../utils';
 
+import EditModeSelect from './EditModeSelect';
+import { nodeEditMode } from '../../lib/edit-mode';
+
 type EditTarget = { kind: 'tag' | 'type'; id: string; value: string } | null;
 
 export default function NodeMetadataDialog() {
@@ -36,6 +39,7 @@ export default function NodeMetadataDialog() {
   }, [tagSearch, taxonomy.tags]);
 
   if (!nodeIds) return null;
+  const mode = selected.length === 1 ? nodeEditMode(selected[0].data) : undefined;
 
   const addTag = () => {
     const id = createTag(newTag);
@@ -72,6 +76,10 @@ export default function NodeMetadataDialog() {
         </header>
 
         <div className="overflow-y-auto p-5 space-y-6">
+          {mode && <label className="flex items-center justify-between text-xs text-ink">
+            {t('editMode.label')}
+            <EditModeSelect value={mode} disabled={selected[0].data.isLoading} onChange={(next) => useStore.getState().setNodeEditMode(selected[0].id, next)} />
+          </label>}
           <section>
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-xs font-semibold text-ink">{t('metadata.type')}</h3>

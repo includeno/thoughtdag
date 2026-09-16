@@ -45,31 +45,24 @@ function preparePendingValue(): void {
 }
 
 function flush() {
-  if (timer) {
-    clearTimeout(timer);
-    timer = null;
-  }
-  preparePendingValue();
-  if (pending) {
-    const { name, value } = pending;
-    pending = null;
-    void idbSet(name, value);
-  }
+  void flushPendingWrites().catch(error => console.error('[thoughtdag] save failed; pending data retained:', error));
 }
 
 // Awaitable flush — used before switching projects so the outgoing
 // project's debounced write lands under its own key.
-export async function flushPendingWrites(): Promise<void> {
-  if (timer) {
-    clearTimeout(timer);
-    timer = null;
-  }
-  preparePendingValue();
-  if (pending) {
-    const { name, value } = pending;
-    pending = null;
-    await idbSet(name, value);
-  }
+let writing: Promise<void> | null = null;
+export function flushPendingWrites(): Promise<void> {
+  if (writing) return writing.then(() => flushPendingWrites());
+  writing = (async () => {
+    preparePendingValue();
+    while (pending) {
+      const entry = pending;
+      await idbSet(entry.name, entry.value);
+      if (pending === entry) pending = null;
+      else preparePendingValue();
+    }
+  })().finally(() => { writing = null; });
+  return writing;
 }
 
 if (typeof window !== 'undefined') {
@@ -87,7 +80,7 @@ export function createIdbObjectStorage<S>(): PersistStorage<S> {
       if (v == null) return null;
       // Back-compat: earlier builds stored the JSON string createJSONStorage wrote
       if (typeof v === 'string') {
-        try { return JSON.parse(v) as StorageValue<S>; } catch { return null; }
+        return JSON.parse(v) as StorageValue<S>;
       }
       return v as StorageValue<S>;
     },
@@ -97,8 +90,8 @@ export function createIdbObjectStorage<S>(): PersistStorage<S> {
       timer = setTimeout(flush, WRITE_DELAY_MS);
     },
     removeItem: async (name) => {
-      pending = null;
-      if (timer) {
+      if (pending?.name === name) pending = null;
+      if (!pending && timer) {
         clearTimeout(timer);
         timer = null;
       }

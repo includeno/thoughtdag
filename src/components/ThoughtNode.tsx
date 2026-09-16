@@ -20,6 +20,7 @@ import { useT, fmt } from '../i18n';
 import MentionSurface from './ui/NodeMention';
 import { useMentions } from '../lib/mentions';
 import { isViewerMode } from '../lib/viewer';
+import EditModeSelect from './ui/EditModeSelect';
 import NodeTaxonomyBadges from './ui/NodeTaxonomyBadges';
 
 export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
@@ -59,6 +60,11 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
   const [branchFromText, setBranchFromText] = useState('');
   const [branchYRatio, setBranchYRatio] = useState(0.5);
   const [editValue, setEditValue] = useState(data.question);
+  const [savedQuestion, setSavedQuestion] = useState(data.question);
+  if (savedQuestion !== data.question) {
+    setSavedQuestion(data.question);
+    setEditValue(data.question);
+  }
   const [editResponseValue, setEditResponseValue] = useState(data.response);
   const responseRef = useRef<HTMLDivElement>(null);
   const nodeRef = useRef<HTMLDivElement>(null);
@@ -69,6 +75,9 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
   const mapMode = zoomTier !== 'work';
 
   // ── Paradigm run semantics (instantiated human/prompt steps) ──
+  const isManual = (data.editMode ?? 'ai') !== 'ai';
+  const isCompact = data.editMode === 'manual';
+  const isStructured = data.editMode === 'manual-detail';
   const isHuman = data.stepKind === 'human';
   // Awaiting its own question (empty ask node / human turn): shared
   // predicate — the focus panel derives the same state from it.
@@ -224,7 +233,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
     if (!editValue.trim()) return;
     // Unchanged question = the user opened the editor to read or copy, not
     // to regenerate — closing must never cost them their answer.
-    if (editValue.trim() === data.question) { setEditing(id, false); return; }
+    if (editValue.trim() === data.question && isManual) { setEditing(id, false); return; }
     if (isHuman) {
       // Human turn: record the question only — no generation on this node;
       // downstream prompt steps answer (and the cascade advances).
@@ -324,7 +333,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
   );
   // Map layer: the display summary for the ACTIVE version. Long answers wear
   // it instead of raw text; the full answer lives one double-click away.
-  const versionSummary = activeSummary(data);
+  const versionSummary = isCompact ? undefined : activeSummary(data);
   const takeawayType = data.summaryTypes?.[data.responseIndex] ?? undefined;
   // Reasoning of the ACTIVE version (models that emit it); display only
   const versionReasoning = data.reasonings?.[data.responseIndex] ?? undefined;
@@ -467,7 +476,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
             if (n) rf.setCenter(n.position.x + 260, n.position.y + 120, { zoom: 1, duration: 300 });
           }}
         >
-          {(versionSummary || data.response) ? (
+          {!isCompact && (versionSummary || data.response) ? (
             isRoot ? (
               <>
                 <div className="text-2xl font-semibold text-ink leading-snug line-clamp-3">
@@ -514,6 +523,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
             <span className="text-2xs text-ink-muted shrink-0 select-none" title={marksTitle} data-tool-marks>{marksLine}</span>
           )}
           {compBar}
+          {!data.stepKind && !isViewerMode && <EditModeSelect value={data.editMode ?? 'ai'} disabled={data.isLoading} onChange={(mode) => useStore.getState().setNodeEditMode(id, mode)} />}
           <NodeTaxonomyBadges tagIds={data.tagIds} customTypeId={data.customTypeId} />
           {data.condensedFrom && data.condensedFrom.length > 0 && (
             <button
@@ -628,8 +638,9 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
               )}
             </div>
           )}
-          {/* Question */}
-          {(data.isEditing && !panelOwnsEditor) || isAwaitingHuman || isAwaitingAsk ? (
+          {/* Question / manually authored subject */}
+          {isStructured && <div className="text-2xs text-ink-faint mb-1">{t('editMode.subject')}</div>}
+          {!panelOwnsEditor && (data.isEditing || isAwaitingHuman || isAwaitingAsk) ? (
             <div>
               <textarea
                 value={editValue}
@@ -638,7 +649,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
                 onBlur={isHuman || isAwaitingAsk ? undefined : handleEditBlur} // click-away keeps the draft, never generates
                 onInput={(e) => autoGrowTa(e.currentTarget)}
                 ref={(el) => { questionTaRef.current = el; autoGrowTa(el); }}
-                placeholder={data.instruction || (isAwaitingAsk ? t('node.askPlaceholder') : undefined)}
+                placeholder={data.instruction || (isStructured ? t('editMode.subjectPlaceholder') : isManual ? t('editMode.placeholder') : isAwaitingAsk ? t('node.askPlaceholder') : undefined)}
                 className={`w-full bg-wash border rounded-xl p-3 text-sm text-ink resize-none focus:outline-none focus:ring-2 ${
                   isHuman ? 'border-warm focus:ring-warm/20' : 'border-accent focus:ring-accent/20'
                 }`}
@@ -648,7 +659,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
               {/* Revision confirms explicitly: visible exits instead of an
                   invisible Enter contract. mousedown-preventDefault keeps the
                   textarea's blur from racing the click. */}
-              {!isHuman && !isAwaitingAsk && (
+              {!isHuman && (
                 <div className="flex items-center justify-end gap-2 mt-1.5">
                   <button
                     onMouseDown={(e) => e.preventDefault()}
@@ -665,7 +676,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
                     className="text-xs bg-accent hover:bg-accent-strong disabled:opacity-30 disabled:cursor-not-allowed text-white px-3.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
                     data-edit-submit
                   >
-                    <Check size={12} strokeWidth={2.25} /> {t('question.editSubmit')}
+                    <Check size={12} strokeWidth={2.25} /> {t(isManual ? 'editMode.save' : 'question.editSubmit')}
                   </button>
                 </div>
               )}
@@ -694,7 +705,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
           )}
 
           {/* Highlights */}
-          {data.highlights.length > 0 && (
+          {!isCompact && data.highlights.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-1">
               {data.highlights.map((h) => (
                 <span key={h.id} className="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
@@ -707,7 +718,8 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
 
           {/* Response — a human turn / pending ask has none by design; a
               waiting prompt step shows its pending state instead of an empty box */}
-          {isHuman || isAwaitingAsk ? null : isWaitingUpstream ? (
+          {isStructured && <div className="text-2xs text-ink-faint mt-3 mb-1">{t('editMode.body')}</div>}
+          {isCompact || isHuman || (isAwaitingAsk && !isStructured) ? null : isWaitingUpstream ? (
             <div className="border-2 border-dashed border-line rounded-xl py-3 px-3 text-xs text-ink-faint flex items-center gap-2">
               <Hourglass size={13} strokeWidth={1.75} /> {t('paradigm.waitingUpstream')}
             </div>
@@ -732,9 +744,11 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
                 <span className="animate-pulse text-accent">●</span> {t('common.thinking')}
               </div>
             )
-          ) : data.isEditingResponse ? (
+          ) : (data.isEditingResponse || (isStructured && !data.response)) && !isViewerMode && !panelOwnsEditor ? (
             <div>
               <textarea
+                aria-label={isStructured ? t('editMode.body') : t('panel.response')}
+                placeholder={isStructured ? t('editMode.bodyPlaceholder') : undefined}
                 value={editResponseValue}
                 onChange={(e) => setEditResponseValue(e.target.value)}
                 onKeyDown={handleResponseEditKeyDown}
@@ -804,7 +818,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
           )}
 
           {/* Web references consulted for this response (compact) */}
-          {(data.references?.length ?? 0) > 0 && !data.isLoading && !data.isEditingResponse && (
+          {!isCompact && (data.references?.length ?? 0) > 0 && !data.isLoading && !data.isEditingResponse && (
             <div className="mt-2 px-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-ink-faint">
               <Globe size={11} strokeWidth={1.75} className="shrink-0" />
               {data.references!.slice(0, 3).map((r, i) =>
@@ -823,9 +837,9 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
           {/* Response action row — LLM-chat convention: the actions that act
               on THIS answer live right under it (regenerate = new version in
               place; the sibling-branch variant lives in the panel's ⋯ menu) */}
-          {data.response && !data.isLoading && !data.isEditingResponse && !isHuman && !isAwaitingAsk && !data.generationFailed && (
+          {!isCompact && data.response && !data.isLoading && !data.isEditingResponse && !isHuman && !isAwaitingAsk && !data.generationFailed && (
             <div className="mt-1.5 flex items-center gap-0.5 text-ink-faint">
-              {!isViewerMode && (
+              {!isManual && !isViewerMode && (
                 <button
                   onClick={(e) => { e.stopPropagation(); void rerunNode(id, {}); }}
                   className={`rounded-full w-6 h-6 flex items-center justify-center transition-colors ${data.isEvaluator ? 'hover:text-watch hover:bg-red-50' : 'hover:text-accent hover:bg-wash'}`}
@@ -874,9 +888,9 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
               )}
               {hasMultipleVersions && (
                 <div className="flex items-center gap-1 text-xs text-ink-muted ml-1">
-                  <button onClick={(e) => { e.stopPropagation(); navigateVersion(id, 'prev'); }} className="hover:text-accent hover:bg-wash rounded-full w-5 h-5 flex items-center justify-center transition-colors"><ChevronLeft size={14} strokeWidth={1.75} /></button>
+                  <button aria-label={t('common.previousVersion')} onClick={(e) => { e.stopPropagation(); navigateVersion(id, 'prev'); }} className="hover:text-accent hover:bg-wash rounded-full w-5 h-5 flex items-center justify-center transition-colors"><ChevronLeft size={14} strokeWidth={1.75} /></button>
                   <span className="text-accent font-medium">v{data.responseIndex + 1}/{data.responses.length}</span>
-                  <button onClick={(e) => { e.stopPropagation(); navigateVersion(id, 'next'); }} className="hover:text-accent hover:bg-wash rounded-full w-5 h-5 flex items-center justify-center transition-colors"><ChevronRight size={14} strokeWidth={1.75} /></button>
+                  <button aria-label={t('common.nextVersion')} onClick={(e) => { e.stopPropagation(); navigateVersion(id, 'next'); }} className="hover:text-accent hover:bg-wash rounded-full w-5 h-5 flex items-center justify-center transition-colors"><ChevronRight size={14} strokeWidth={1.75} /></button>
                   {!isViewerMode && (
                     <button
                       onClick={(e) => { e.stopPropagation(); deleteVersion(id, data.responseIndex); }}
@@ -892,15 +906,15 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
           )}
 
           {/* Failed generation: retry in place */}
-          {data.generationFailed && !data.isLoading && (
+          {!isManual && data.generationFailed && !data.isLoading && (
             <div className="mt-2 flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
               <AlertTriangle size={14} strokeWidth={1.75} className="shrink-0" />
               {t('common.generationFailed')}
               {hasMultipleVersions && (
                 <span className="flex items-center gap-1 text-ink-muted shrink-0" title={t('node.backToVersionTitle')}>
-                  <button onClick={(e) => { e.stopPropagation(); navigateVersion(id, 'prev'); }} className="hover:text-accent rounded-full w-5 h-5 flex items-center justify-center"><ChevronLeft size={14} strokeWidth={1.75} /></button>
+                  <button aria-label={t('common.previousVersion')} onClick={(e) => { e.stopPropagation(); navigateVersion(id, 'prev'); }} className="hover:text-accent rounded-full w-5 h-5 flex items-center justify-center"><ChevronLeft size={14} strokeWidth={1.75} /></button>
                   v{data.responseIndex + 1}/{data.responses.length}
-                  <button onClick={(e) => { e.stopPropagation(); navigateVersion(id, 'next'); }} className="hover:text-accent rounded-full w-5 h-5 flex items-center justify-center"><ChevronRight size={14} strokeWidth={1.75} /></button>
+                  <button aria-label={t('common.nextVersion')} onClick={(e) => { e.stopPropagation(); navigateVersion(id, 'next'); }} className="hover:text-accent rounded-full w-5 h-5 flex items-center justify-center"><ChevronRight size={14} strokeWidth={1.75} /></button>
                 </span>
               )}
               {!isViewerMode && (
@@ -924,7 +938,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
 
           {/* Inline continue input — hidden while a paradigm run is in
               progress (the structure IS the paradigm); returns on unlock */}
-          {!data.isLoading && !data.isEditingResponse && !isAwaitingAsk && !(isParadigmNode && runLocked) && !isViewerMode && selectedNodeId !== id && (
+          {!isManual && !data.isLoading && !data.isEditingResponse && !isAwaitingAsk && !(isParadigmNode && runLocked) && !isViewerMode && selectedNodeId !== id && (
             <div className="mt-3 pt-3 border-t border-line relative">
               <MentionSurface m={mention} text={inputValue} setText={setInputValue} />
               <div className="flex items-end gap-2 bg-wash rounded-xl px-4 py-2.5 transition-shadow focus-within:ring-1 focus-within:ring-accent/40">
@@ -985,7 +999,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
             <div className="text-xs text-ink-faint mt-1.5 leading-relaxed line-clamp-2">
               {versionSummary}
             </div>
-          ) : data.response ? (
+          ) : !isCompact && data.response ? (
             <div className="text-xs text-ink-faint mt-1.5 leading-relaxed line-clamp-2 italic">
               {data.importSource ? conclusionOf(data.response) : `${data.response.replace(/[#*`>-]/g, '').slice(0, 120)}${data.response.length > 120 ? '…' : ''}`}
             </div>

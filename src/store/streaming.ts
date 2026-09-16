@@ -1,3 +1,4 @@
+import { responseVersions, withResponseVersions } from '../lib/response-versions';
 import type { StoreApi } from 'zustand';
 import { walkUpAncestors } from '../lib/graph';
 import { upstreamFingerprint, type MessageSource } from './context-builder';
@@ -22,7 +23,7 @@ import type { StoreState } from './types';
 // across plaques and classifications aware of what the thinking already
 // ruled out or decided — the lines read as one progression, not islands.
 export const SUMMARY_MIN_CHARS = 400;
-export function generateSummary(nodeId: string, question: string, response: string, setSummary: (id: string, summary: string, forResponse: string, type?: string, topic?: string) => void, mapLines?: string[]) {
+export function generateSummary(nodeId: string, question: string, response: string, setSummary: (id: string, summary: string, forResponse: string, type?: string, topic?: string, versionId?: string) => void, mapLines?: string[], versionId?: string) {
   if (response.length < SUMMARY_MIN_CHARS) return;
   const mapBlock = mapLines && mapLines.length > 0
     ? `Takeaway lines already on the map, along this node's ancestor path (oldest first):\n${mapLines.join('\n')}\n\nUse those lines ONLY to align terminology and avoid repeating them. Classify this exchange's epistemic move on its own merits, independent of the lines above.\n\n`
@@ -42,7 +43,7 @@ export function generateSummary(nodeId: string, question: string, response: stri
     const text = three ? three[3].trim() : (two ? two[2].trim() : line);
     // target the version this summary was computed FOR, not whichever
     // version the user has navigated to since
-    setSummary(nodeId, text, response, type, topic);
+    setSummary(nodeId, text, response, type, topic, versionId);
   }).catch(() => {});
 }
 
@@ -112,6 +113,9 @@ export async function runNodeGeneration(
   // Read-only viewer: no generation whatsoever — belt-and-braces behind the
   // hidden UI (a missed button must still be inert).
   if (isViewerMode) return;
+  // Capture before the first await: later upstream edits must mark this
+  // answer stale, even if they happen while discovering models or streaming.
+  const contextHash = upstreamFingerprint(nodeId, get().nodes, get().edges);
   const { question, images, onSuccess, versionMode = 'replace' } = opts;
   let { messages } = opts;
   if (!opts.autoChain) autoRunCounts.clear(); // a fresh user action starts a new wave
@@ -164,9 +168,6 @@ export async function runNodeGeneration(
     const tokenCount = countTokens(question + response);
     const modelUsed = actualModel ?? pinnedModel ?? useUiStore.getState().selectedModel ?? serverDefaultModel ?? undefined;
     get().logEvent('generate', nodeId, { chars: response.length, ...(modelUsed ? { model: modelUsed } : {}), ...(failed ? { failed: true } : {}) });
-    // Provenance: fingerprint what this answer depended on, AT completion —
-    // the staleness pass compares this against the live upstream fingerprint.
-    const contextHash = upstreamFingerprint(nodeId, get().nodes, get().edges);
     set((state) => ({
       nodes: state.nodes.map((n) => {
         if (n.id !== nodeId) return n;
@@ -177,19 +178,16 @@ export async function runNodeGeneration(
         // so repeated retries don't stack failure entries.
         const failText = new Set([t('node.failedPlaceholder'), t('node.emptyResponse')]);
         const kept = versionMode === 'append' || failed
-          ? n.data.responses.map((r, i) => ({ r, q: n.data.questions?.[i], by: n.data.generatedBy?.[i], rs: n.data.reasonings?.[i], at: n.data.generatedAts?.[i], ed: n.data.editedAts?.[i], gw: n.data.gatewaySearches?.[i] })).filter(({ r }) => r && !(failed && failText.has(r)))
-          : [];
+          ? responseVersions(n.data).filter(v => v.response && !(failed && failText.has(v.response))) : [];
         const now = new Date().toISOString();
-        const responses = [...kept.map(({ r }) => r), response];
-        // the (question, answer) pair rail: editQuestion pinned old wordings
-        // already; anything still absent shared the current wording
-        const questions = [...kept.map(({ q }) => q ?? n.data.question), n.data.question];
-        const generatedBy = [...kept.map(({ by }) => by), modelUsed];
-        const gatewaySearches = [...kept.map(({ gw }) => gw), gatewaySearched || undefined];
-        const reasonings = [...kept.map(({ rs }) => rs), n.data.reasoning || undefined];
-        const generatedAts = [...kept.map(({ at }) => at), now];
-        const editedAts = [...kept.map(({ ed }) => ed), undefined];
-        return { ...n, data: { ...n.data, response, responses, questions, generatedBy, gatewaySearches, reasonings, generatedAts, editedAts, reasoning: undefined, restreaming: undefined, responseIndex: responses.length - 1, isLoading: false, tokenCount, generationFailed: failed || undefined, references, highlights: pruneHighlights(n.data.highlights, response), lastContextHash: contextHash, lastGeneratedAt: now } };
+        const versions = [...kept, { id: crypto.randomUUID(), question, response, author: 'model' as const,
+          model: modelUsed, reasoning: n.data.reasoning || undefined, generatedAt: now,
+          gatewaySearch: gatewaySearched || undefined, references, contextHash,
+        }];
+        return { ...n, data: { ...withResponseVersions(n.data, versions, versions.length - 1), reasoning: undefined,
+          restreaming: undefined, isLoading: false, tokenCount, generationFailed: failed || undefined,
+          highlights: pruneHighlights(n.data.highlights, response) } };
+
       }),
     }));
   };
@@ -334,7 +332,7 @@ export async function runNodeGeneration(
     writeFinal(response);
     onSuccess?.(response);
     get().pushHistory();
-    generateSummary(nodeId, question, response, get().setSummary, collectMapLines(nodeId, get().nodes, get().edges));
+    generateSummary(nodeId, question, response, get().setSummary, collectMapLines(nodeId, get().nodes, get().edges), get().nodes.find(n => n.id === nodeId)?.data.responseVersions?.at(-1)?.id);
     if (!selfData?.stepKind && !selfData?.digestOf) judgeMemory(question, response);
     triggerAutoReruns(set, get, nodeId);
     triggerParadigmCascade(get, nodeId);

@@ -49,6 +49,36 @@ export function snapshotOf(source: SnapshotSource): Snapshot {
   };
 }
 
+const sameValue = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
+const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
+
+function changedLeaves(before: unknown, after: unknown, path: string[] = []): NonNullable<EntityChange<never>['patches']> {
+  if (before === after) return [];
+  if (isRecord(before) && isRecord(after)) {
+    return [...new Set([...Object.keys(before), ...Object.keys(after)])]
+      .filter(key => !TRANSIENT_KEYS.has(key))
+      .flatMap(key => changedLeaves(before[key], after[key], [...path, key]));
+  }
+  if (sameValue(before, after)) return [];
+  return [{ path, ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}) }];
+}
+
+export function patchEntity<T>(entity: T, patches: NonNullable<EntityChange<T>['patches']>, side: 'before' | 'after'): T {
+  const result = { ...entity } as Record<string, unknown>;
+  for (const patch of patches) {
+    let target = result;
+    for (const key of patch.path.slice(0, -1)) {
+      if (!isRecord(target[key])) throw new Error('Invalid transaction patch path');
+      target[key] = { ...target[key] };
+      target = target[key] as Record<string, unknown>;
+    }
+    const key = patch.path.at(-1)!;
+    if (patch[side] === undefined) delete target[key];
+    else target[key] = patch[side];
+  }
+  return result as T;
+}
+
 function diffEntities<T extends { id: string }>(before: T[], after: T[]): EntityChange<T>[] {
   if (before === after) return [];
   const beforeById = new Map(before.map((item, index) => [item.id, { item, index }]));
@@ -58,9 +88,18 @@ function diffEntities<T extends { id: string }>(before: T[], after: T[]): Entity
   for (const id of ids) {
     const b = beforeById.get(id);
     const a = afterById.get(id);
-    const serialize = (value: T) => JSON.stringify(value, (key, item) => TRANSIENT_KEYS.has(key) ? undefined : item);
-    const sameValue = b?.item === a?.item || (!!b && !!a && serialize(b.item) === serialize(a.item));
-    if (sameValue && b?.index === a?.index) continue;
+    if (b?.item === a?.item && b?.index === a?.index) continue;
+    if (b && a) {
+      const patches = changedLeaves(b.item, a.item);
+      if (!patches.length && b.index === a.index) continue;
+      // Attachment migration and taxonomy reconciliation operate on whole
+      // nodes. Keep those uncommon edits self-contained for existing tools.
+      if (!patches.some(p => p.path[0] === 'data' && (p.path.length === 1
+        || ['attachments', 'tagIds', 'customTypeId'].includes(p.path[1])))) {
+        changes.push({ id, beforeIndex: b.index, afterIndex: a.index, patches });
+        continue;
+      }
+    }
     changes.push({
       id,
       ...(b ? { before: b.item, beforeIndex: b.index } : {}),
@@ -112,7 +151,9 @@ function applyEntityChanges<T extends { id: string }>(
   const next = current.filter((item) => !changedIds.has(item.id));
   const insertions = changes
     .map((change) => ({
-      value: direction === 'forward' ? change.after : change.before,
+      value: change.patches
+        ? patchEntity(current.find(item => item.id === change.id)!, change.patches, direction === 'forward' ? 'after' : 'before')
+        : direction === 'forward' ? change.after : change.before,
       index: direction === 'forward' ? change.afterIndex : change.beforeIndex,
     }))
     .filter((entry): entry is { value: T; index: number | undefined } => !!entry.value)

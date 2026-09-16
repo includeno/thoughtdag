@@ -61,6 +61,7 @@ export interface KnowledgeQueryHit {
   matchedFields: SearchField[];
   /** Total substring occurrences across all searchable values. */
   occurrenceCount: number;
+  excerpt?: { snippet: string; matchStart: number; matchLen: number };
 }
 
 export interface KnowledgeQueryResult {
@@ -638,17 +639,25 @@ export function queryKnowledgeNodes(
       if (!Number.isFinite(created) || (from != null && created < from) || (to != null && created > to)) continue;
     }
     let occurrenceCount = 0;
+    let excerpt: KnowledgeQueryHit['excerpt'];
     const matchedFields = new Set<SearchField>();
     if (text) {
       for (const [field, raw] of searchableValues(node)) {
         const count = countOccurrences(raw.toLowerCase(), text);
         if (count === 0) continue;
+        if (!excerpt) {
+          const at = raw.toLowerCase().indexOf(text);
+          const start = Math.max(0, at - 40);
+          const end = Math.min(raw.length, at + text.length + 60);
+          const prefix = start > 0 ? '…' : '';
+          excerpt = { snippet: prefix + raw.slice(start, end) + (end < raw.length ? '…' : ''), matchStart: prefix.length + at - start, matchLen: text.length };
+        }
         occurrenceCount += count;
         matchedFields.add(field);
       }
       if (occurrenceCount === 0) continue;
     }
-    hits.push({ nodeId: node.id, matchedFields: [...matchedFields], occurrenceCount, index });
+    hits.push({ nodeId: node.id, matchedFields: [...matchedFields], occurrenceCount, index, ...(excerpt ? { excerpt } : {}) });
   }
   hits.sort((a, b) => (text ? b.occurrenceCount - a.occurrenceCount : 0) || a.nodeId.localeCompare(b.nodeId));
   return {
@@ -657,6 +666,7 @@ export function queryKnowledgeNodes(
       nodeId: hit.nodeId,
       matchedFields: hit.matchedFields,
       occurrenceCount: hit.occurrenceCount,
+      ...(hit.excerpt ? { excerpt: hit.excerpt } : {}),
     })),
   };
 }

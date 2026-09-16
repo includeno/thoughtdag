@@ -226,34 +226,61 @@ async function drainGenerations(): Promise<void> {
  *  flushes here so a switch never loses a minute of changes. */
 export const beforeSwitchHooks: Array<() => Promise<void>> = [];
 
+export function reportProjectError(error: unknown): void {
+  toast('error', error instanceof Error ? error.message : t('toast.projectsLoadFailed'));
+}
+
 export async function switchProject(id: string): Promise<void> {
-  for (const hook of beforeSwitchHooks) await hook().catch(() => undefined);
   const { activeId, switching, projects } = useProjects.getState();
-  if (switching || id === activeId || !projects.some((p) => p.id === id)) return;
+  if (switching) throw new Error(t('toast.projectSwitchBusy'));
+  if (!projects.some((p) => p.id === id)) throw new Error(t('toast.projectsLoadFailed'));
+  if (id === activeId) return;
   useProjects.setState({ switching: true });
   try {
+    for (const hook of beforeSwitchHooks) await hook();
     await drainGenerations();
     // Legacy editing surfaces still commit through a short coalescing window.
     // Close that window before changing the persist key, otherwise the graph
     // can land under the old project without its matching Undo transaction.
     if (!flushPendingTransaction('project.switch')) {
-      toast('info', t('toast.projectSwitchBusy'));
-      return;
+      throw new Error(t('toast.projectSwitchBusy'));
     }
     await flushPendingWrites();
+    // Prepare the target without changing the storage key or live graph.
+    // Zustand's rehydrate swallows read/merge errors, so use its storage,
+    // migration and merge explicitly at this transactional boundary.
+    const options = useStore.persist.getOptions();
+    const stored = await options.storage!.getItem(projectStorageKey(id));
+    if (stored && (!stored.state || !Array.isArray(stored.state.nodes) || !Array.isArray(stored.state.edges))) {
+      throw new Error(t('toast.projectsLoadFailed'));
+    }
+    let persisted = stored?.state;
+    if (stored && stored.version !== options.version) {
+      if (!options.migrate) throw new Error(t('toast.projectsLoadFailed'));
+      persisted = await options.migrate(stored.state, stored.version ?? 0);
+    }
+    const next = options.merge!(persisted, useStore.getState());
+    const nextProjects = useProjects.getState().projects.map(p => p.id === id ? { ...p, archived: false } : p);
+    // A read can take long enough for an edit/extraction to start. Recheck
+    // the outgoing boundary before committing metadata or changing keys.
+    if (!flushPendingTransaction('project.switch')) throw new Error(t('toast.projectSwitchBusy'));
+    await flushPendingWrites();
+    await idbSet(META_KEY, { projects: nextProjects, activeId: id });
+    try {
+      if (!flushPendingTransaction('project.switch')) throw new Error(t('toast.projectSwitchBusy'));
+      await flushPendingWrites();
+    } catch (error) {
+      await saveMeta();
+      throw error;
+    }
     suppressTouch = true;
     useStore.persist.setOptions({ name: projectStorageKey(id) });
-    await useStore.persist.rehydrate();
-    useStore.setState({ selectedNodeId: null, selectedNodeIds: [] });
-    useUiStore.setState({ activeNodeId: null, selectedOrganizationRelationId: null, localDepth: 0 });
+    useStore.setState({ ...next, selectedNodeId: null, selectedNodeIds: [] });
+    useUiStore.setState({ activeNodeId: null, selectedOrganizationRelationId: null, localDepth: 0, knowledgeQuery: {} });
     // opening IS unarchiving: archived means "hidden from the lists", and
     // a canvas the user just switched to is back in the working set —
     // whatever road led here (atlas card, archived group, canonical open)
-    useProjects.setState((s) => ({
-      activeId: id,
-      projects: s.projects.map((p) => (p.id === id && p.archived ? { ...p, archived: false } : p)),
-    }));
-    await saveMeta();
+    useProjects.setState({ activeId: id, projects: nextProjects });
   } finally {
     suppressTouch = false;
     useProjects.setState({ switching: false });
@@ -267,8 +294,11 @@ export async function createProject(name = 'Untitled', kind: 'chat' | 'paradigm'
   useProjects.setState((s) => ({
     projects: [...s.projects, { id, name, createdAt: now, updatedAt: now, kind }],
   }));
-  await saveMeta();
-  await switchProject(id); // empty key rehydrates to an empty canvas
+  try { await switchProject(id); }
+  catch (error) {
+    useProjects.setState(s => ({ projects: s.projects.filter(p => p.id !== id) }));
+    throw error;
+  }
   return id;
 }
 
@@ -301,12 +331,16 @@ export async function adoptImportedProject(
   kind: 'chat' | 'paradigm' = 'chat',
   extras?: Partial<Pick<ProjectMeta, 'instantiatedFrom' | 'sourceSession'>>,
 ): Promise<void> {
+  if (useProjects.getState().projects.some(p => p.id === id)) throw new Error('Project already exists');
   const now = Date.now();
   useProjects.setState((s) => ({
     projects: [...s.projects, { id, name, createdAt: now, updatedAt: now, kind, ...extras }],
   }));
-  await saveMeta();
-  await switchProject(id);
+  try { await switchProject(id); }
+  catch (error) {
+    useProjects.setState(s => ({ projects: s.projects.filter(p => p.id !== id) }));
+    throw error;
+  }
 }
 
 // Seed a new paradigm project with the built-in rule-out/rule-in score and

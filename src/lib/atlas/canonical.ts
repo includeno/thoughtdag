@@ -326,7 +326,7 @@ async function appendPastLedger(
           data: {
             ...n.data,
             question: fd.question, response: fd.response,
-            responses: fd.responses, responseIndex: fd.responseIndex,
+            responses: fd.responses, responseIndex: fd.responseIndex, responseVersions: fd.responseVersions,
             tokenCount: fd.tokenCount, attachments,
             importSource: fd.importSource, source: fd.source,
           },

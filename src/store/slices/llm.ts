@@ -1,6 +1,7 @@
+import { responseVersions } from '../../lib/response-versions';
 import type { StateCreator } from 'zustand';
 import type { ThoughtNode, ThoughtEdge } from '../../types';
-import { generateId } from '../../utils';
+import { generateId, countTokens } from '../../utils';
 import { autoLayout } from '../../lib/layout';
 import { getDescendantIds, selectionSinks, walkUpAncestors } from '../../lib/graph';
 import { COLORS } from '../../lib/constants';
@@ -16,6 +17,8 @@ export const createLlmSlice: StateCreator<StoreState, [], [], LlmSlice> = (set, 
   addQuestion: async (question: string, opts: AddQuestionOptions = {}) => {
     if (condenseGuard()) return;
     const { parentId, branchContext, branchYRatio, inheritRole, rolePrompt, initialAttachments, excludeAllInheritedAttachments, mentions } = opts;
+    const editMode = opts.editMode ?? 'ai';
+    const response = editMode === 'manual-detail' ? opts.initialResponse?.trim() ?? '' : '';
     const id = generateId();
     get().logEvent('ask', id, { chars: question.length, ...(parentId ? {} : { root: true }), ...(branchContext ? { branch: true } : {}) });
     const isRoot = !parentId;
@@ -31,17 +34,18 @@ export const createLlmSlice: StateCreator<StoreState, [], [], LlmSlice> = (set, 
       dragHandle: '.drag-handle',
       data: {
         question,
+        editMode,
         createdAt: new Date().toISOString(),
         askedAt: new Date().toISOString(),
         model: inheritedModel,
-        response: '',
-        responses: [],
-        responseIndex: -1,
+        response,
+        responses: response ? [response] : [],
+        responseIndex: response ? 0 : -1,
         isCollapsed: false,
         isEditing: false,
         isEditingResponse: false,
-        isLoading: true,
-        tokenCount: 0,
+        isLoading: editMode === 'ai',
+        tokenCount: editMode !== 'ai' ? countTokens(question + response) : 0,
         branchContext,
         highlights: [], highlightMode: 'tag', attachments: initialAttachments || [],
         excludedAttachmentIds: excludeAllInheritedAttachments && parentId
@@ -120,6 +124,7 @@ export const createLlmSlice: StateCreator<StoreState, [], [], LlmSlice> = (set, 
     // mid-generation can therefore undo the command cleanly; the settled
     // answer is recorded as a separate result transaction.
     get().pushHistory('question.create');
+    if (editMode !== 'ai') return;
 
     // Build full context from ancestors + explicit role for the new node
     const selfNode = get().nodes.find((n) => n.id === id);
@@ -363,6 +368,7 @@ export const createLlmSlice: StateCreator<StoreState, [], [], LlmSlice> = (set, 
     if (condenseGuard()) return;
     get().pushHistory();
     get().logEvent('edit-question', nodeId, { chars: question.length });
+    const manual = (get().nodes.find((n) => n.id === nodeId)?.data.editMode ?? 'ai') !== 'ai';
     // Staleness seed: descendants keep answers written against the OLD
     // content — surface the blast radius now, replay stays manual.
     const prevQuestion = get().nodes.find((n) => n.id === nodeId)?.data.question;
@@ -375,16 +381,22 @@ export const createLlmSlice: StateCreator<StoreState, [], [], LlmSlice> = (set, 
       nodes: state.nodes.map((n) =>
         n.id === nodeId ? { ...n, data: {
           ...n.data,
+          responseVersions: responseVersions(n.data),
           // Turn versions: the wording is changing — pin the OLD wording to
           // every existing version first (absent array = they all shared it),
           // so the (question, answer) pairs stay truthful after the edit.
           ...(prevQuestion && prevQuestion !== question && n.data.responses.length > 0
             ? { questions: n.data.responses.map((_, i) => n.data.questions?.[i] ?? prevQuestion) }
             : {}),
-          question, askedAt: new Date().toISOString(), isEditing: false, isLoading: true,
+          question, askedAt: new Date().toISOString(), isEditing: false, isLoading: !manual,
+          ...(manual ? { tokenCount: countTokens(question + n.data.response) } : {}),
         } } : n
       ),
     }));
+    if (manual) {
+      get().pushHistory('node.manual-edit');
+      return;
+    }
     // Rebuild context with this node's own Q&A blanked out
     const editNode = get().nodes.find((n) => n.id === nodeId);
     const editCtx = buildContext(nodeId, get().nodes.map(n =>
