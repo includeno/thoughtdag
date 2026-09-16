@@ -137,7 +137,7 @@ test('why: reads hidden by default, every turn once with --include-read, evidenc
   assert.match(why, /≈ 崩溃来自流式输出/);
   assert.match(why, /not a verified reason/);
   assert.ok(why.includes('「免费档模型一用就崩，帮我查」'), 'session named by what was asked');
-  assert.equal((why.match(/thoughtdag-includeno:\/\/open\?session=/g) ?? []).length, 2);
+  assert.equal((why.match(/thoughtdag:\/\/open\?session=/g) ?? []).length, 2);
   const withReads = run('why', 'src/lib/api.ts', '--include-read');
   assert.match(withReads.split('\n')[0], /3 turns in 3 sessions/);
   assert.match(withReads, /\(subagent\)/);
@@ -193,18 +193,18 @@ test('a turn id reused after a compaction is two turns, not one swallowed', () =
 
 test('every hit opens at its own turn; a session opened from a canvas says so', () => {
   const json = JSON.parse(run('why', 'src/lib/api.ts', '--json'));
-  assert.ok(json.hits.every((h) => /^thoughtdag-includeno:\/\/open\?session=[^&]+&turn=[^&]+$/.test(h.open)), JSON.stringify(json.hits.map((h) => h.open)));
+  assert.ok(json.hits.every((h) => /^thoughtdag:\/\/open\?session=[^&]+&turn=[^&]+$/.test(h.open)), JSON.stringify(json.hits.map((h) => h.open)));
   const text = run('why', 'src/lib/api.ts', '--include-read');
   const hitLines = text.split('\n').filter((l) => /^  \d{4}-\d{2}-\d{2} /.test(l));
-  assert.ok(hitLines.length >= 3 && hitLines.every((l) => /thoughtdag-includeno:\/\/open\?session=[^&\s]+&turn=\S+$/.test(l)), 'every hit line in the TEXT output ends with its own deep link');
-  assert.ok(text.includes('thoughtdag-includeno://open?session=sid-1&turn=u1'));
+  assert.ok(hitLines.length >= 3 && hitLines.every((l) => /thoughtdag:\/\/open\?session=[^&\s]+&turn=\S+$/.test(l)), 'every hit line in the TEXT output ends with its own deep link');
+  assert.ok(text.includes('thoughtdag://open?session=sid-1&turn=u1'));
 });
 
 test('find: exact words asked (Q) or answered (A), anywhere in the text, newest first, with pointers', () => {
   const asked = run('find', '模型一用就崩');
   assert.match(asked.split('\n')[0], /^find "模型一用就崩"  ·  1 turn in 1 session$/);
   assert.match(asked, /Q: 免费档模型一用就崩，帮我查/);
-  assert.match(asked, /thoughtdag-includeno:\/\/open\?session=sid-1&turn=u1/);
+  assert.match(asked, /thoughtdag:\/\/open\?session=sid-1&turn=u1/);
   const said = run('find', 'OAuth');
   assert.match(said, /A: .*走 OAuth，服务端零改动/);
   assert.match(run('find', 'OAuth', '--in', 'q'), /0 turns/);
@@ -223,7 +223,7 @@ test('--json carries the evidence legend and per-hit fields', () => {
   assert.equal(json.turns, 2); assert.equal(json.readsHidden, 1);
   assert.match(json.evidence.change, /^observed/);
   assert.equal(json.artifact, `file://${realProj}/src/lib/api.ts`); assert.equal(json.file, `${realProj}/src/lib/api.ts`);
-  assert.ok(json.hits.every((h) => h.open.startsWith('thoughtdag-includeno://open?session=')));
+  assert.ok(json.hits.every((h) => h.open.startsWith('thoughtdag://open?session=')));
 });
 
 test('deleted interpretation and text caches come back on the next index', () => {

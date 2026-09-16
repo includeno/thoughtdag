@@ -35,6 +35,11 @@ export function nodeHeight(node: ThoughtNode): number {
   return Math.max(node.measured?.height ?? 0, estimateNodeHeight(node));
 }
 
+// Layout reserves expanded space; collapsing a card never compacts its chain.
+export function expandedNodeHeight(node: ThoughtNode): number {
+  return nodeHeight({ ...node, data: { ...node.data, isCollapsed: false } });
+}
+
 /**
  * Column-Tree layout with collision resolution.
  *
@@ -154,7 +159,7 @@ export function autoLayout(allNodes: ThoughtNode[], allEdges: ThoughtEdge[]): Th
   const nodes = allNodes.filter((n) => !contentIds.has(n.id));
   const edges = allEdges.filter((e) => !contentIds.has(e.source) && !contentIds.has(e.target));
 
-  const NODE_WIDTH = LAYOUT_COL_WIDTH;
+  const NODE_WIDTH = nodes.reduce((width, node) => Math.max(width, node.measured?.width ?? node.width ?? 0), LAYOUT_COL_WIDTH);
   const H_GAP = LAYOUT_H_GAP;
   const V_GAP = LAYOUT_V_GAP;
   const V_PAD = 24; // extra vertical padding for collision
@@ -201,12 +206,12 @@ export function autoLayout(allNodes: ThoughtNode[], allEdges: ThoughtEdge[]): Th
     // hangs from one document and reads as a line rather than floating at the
     // centroid of a row of papers (tried once, #20).
     const lowest = mats.reduce((a, b) =>
-      a.position.y + nodeHeight(a) > b.position.y + nodeHeight(b) ? a : b);
+      a.position.y + expandedNodeHeight(a) > b.position.y + expandedNodeHeight(b) ? a : b);
     const k = perMaterialCount.get(lowest.id) ?? 0;
     perMaterialCount.set(lowest.id, k + 1);
     materialAnchors.set(root.id, {
       x: lowest.position.x - 60 + k * (LAYOUT_COL_WIDTH + LAYOUT_H_GAP),
-      y: lowest.position.y + nodeHeight(lowest) + LAYOUT_V_GAP,
+      y: lowest.position.y + expandedNodeHeight(lowest) + LAYOUT_V_GAP,
     });
   }
 
@@ -259,6 +264,7 @@ export function autoLayout(allNodes: ThoughtNode[], allEdges: ThoughtEdge[]): Th
     const nodeColumn = new Map<string, number>();
     let nextColumn = 0;
     let nextVirt = VIRT_BASE;
+    let virtualRight = 0;
     const colXOverride = new Map<number, number>();
     const colX = (col: number) => colXOverride.get(col) ?? col * (NODE_WIDTH + H_GAP);
 
@@ -270,7 +276,8 @@ export function autoLayout(allNodes: ThoughtNode[], allEdges: ThoughtEdge[]): Th
 
       if (continuation) assignColumns(continuation, col);
 
-      // Regenerate siblings: columns immediately adjacent (col+1, col+2, ...).
+      // Reserve the entire descendant subtree before placing the next sibling.
+      // Reusing col+1 here puts a sibling parent above another branch's child.
       // On an ANCHORED chain (virtual column) the sibling must take a fresh
       // virtual column pinned beside the chain — arithmetic on a virtual
       // column id would land in the grid formula at x ≈ 62 million, and
@@ -279,23 +286,22 @@ export function autoLayout(allNodes: ThoughtNode[], allEdges: ThoughtEdge[]): Th
         let regenCol: number;
         if (col >= VIRT_BASE) {
           regenCol = nextVirt++;
-          colXOverride.set(regenCol, colX(col) + (i + 1) * (NODE_WIDTH + H_GAP));
+          virtualRight += NODE_WIDTH + H_GAP;
+          colXOverride.set(regenCol, virtualRight);
         } else {
-          regenCol = col + 1 + i;
-          nextColumn = Math.max(nextColumn, regenCol + 1);
+          regenCol = nextColumn++;
         }
         assignColumns(regenerates[i], regenCol);
       }
 
       // Explore branches: after all regenerate columns (anchored chains keep
       // them beside the chain too, past the sibling columns)
-      let exploreOffset = 0;
       for (const ec of explores) {
         let exploreCol: number;
         if (col >= VIRT_BASE) {
           exploreCol = nextVirt++;
-          colXOverride.set(exploreCol, colX(col) + (regenerates.length + 1 + exploreOffset) * (NODE_WIDTH + H_GAP));
-          exploreOffset++;
+          virtualRight += NODE_WIDTH + H_GAP;
+          colXOverride.set(exploreCol, virtualRight);
         } else {
           exploreCol = nextColumn;
           nextColumn++;
@@ -308,6 +314,7 @@ export function autoLayout(allNodes: ThoughtNode[], allEdges: ThoughtEdge[]): Th
       const anchor = materialAnchors.get(root.id);
       if (anchor) {
         const virtCol = nextVirt++;
+        virtualRight = anchor.x;
         colXOverride.set(virtCol, anchor.x);
         assignColumns(root.id, virtCol);
       } else {
@@ -360,7 +367,7 @@ export function autoLayout(allNodes: ThoughtNode[], allEdges: ThoughtEdge[]): Th
   // --- Pass 2: Vertical positioning ---
   const nodeHeightMap = new Map<string, number>();
   for (const node of nodes) {
-    nodeHeightMap.set(node.id, nodeHeight(node));
+    nodeHeightMap.set(node.id, expandedNodeHeight(node));
   }
 
   const positioned = new Map<string, { x: number; y: number }>();
@@ -642,7 +649,7 @@ export function autoLayout(allNodes: ThoughtNode[], allEdges: ThoughtEdge[]): Th
         const width = node.measured?.width ?? node.width ?? LAYOUT_COL_WIDTH;
         const height = contentKinds.has(node.data.stepKind ?? '')
           ? (node.measured?.height ?? node.height ?? 120)
-          : Math.max(node.measured?.height ?? 0, node.height ?? 0, nodeHeight(node));
+          : Math.max(node.measured?.height ?? 0, node.height ?? 0, expandedNodeHeight(node));
         return { x: position.x, y: position.y, width, height };
       })
       .filter((r): r is { x: number; y: number; width: number; height: number } => r !== null);

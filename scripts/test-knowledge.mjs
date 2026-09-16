@@ -335,6 +335,17 @@ test('card projection groups in UTC and sorts groups and cards deterministically
   assert.deepEqual(oldest.map((group) => group.key), ['2026-08-20', '2026-08-21']);
 });
 
+test('tag-name search matches metadata, combines filters and follows renames', () => {
+  const graph = { nodes: [node('tagged', { tagIds: ['mq'] }), node('text-only', { question: '消息队列' })], tags: [{ id: 'mq', name: '消息队列 MQ', color: '#888' }] };
+  assert.ok(knowledgeQueryIsActive({ tagText: 'mq' }));
+  assert.deepEqual(queryKnowledgeNodes(graph, { tagText: ' MQ ' }).nodeIds, ['tagged']);
+  assert.deepEqual(queryKnowledgeNodes(graph, { tagText: 'missing' }).nodeIds, []);
+  assert.deepEqual(queryKnowledgeNodes(graph, { tagText: 'mq', text: '消息队列' }).nodeIds, []);
+  graph.tags[0].name = 'Broker';
+  assert.deepEqual(queryKnowledgeNodes(graph, { tagText: 'mq' }).nodeIds, []);
+  assert.deepEqual(projectKnowledgeQuery(graph, { tagText: 'broker' }).matchedNodeIds, ['tagged']);
+});
+
 let passed = 0;
 for (const { name, run } of tests) {
   try {

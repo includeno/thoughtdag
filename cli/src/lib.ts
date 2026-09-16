@@ -1,4 +1,3 @@
-import desktopIdentity from '../../desktop/package.json';
 // The why layer as a library: the stores under ~/.thoughtdag, the index over
 // every runner's session files, and the four questions (why_check, why_file,
 // find, recall_turn) as functions that return text. `main.ts` is the command
@@ -664,8 +663,8 @@ function anchorStatus(facts: FactIndex, a: NonNullable<FactSession['anchor']>): 
  *  canvas project at that node. */
 function openLink(h: Hit): string {
   // canvas: the project's own id when the backup carried one, its name otherwise
-  if (h.session.runner === 'thoughtdag') return `${desktopIdentity.build.protocols[0].schemes[0]}://open?canvas=${encodeURIComponent(h.session.id)}&node=${encodeURIComponent(h.turn.t.split('#').pop() ?? '')}`;
-  return `${desktopIdentity.build.protocols[0].schemes[0]}://open?session=${h.session.id}${h.turn.item ? `&turn=${encodeURIComponent(h.turn.item)}` : ''}`;
+  if (h.session.runner === 'thoughtdag') return `thoughtdag://open?canvas=${encodeURIComponent(h.session.id)}&node=${encodeURIComponent(h.turn.t.split('#').pop() ?? '')}`;
+  return `thoughtdag://open?session=${h.session.id}${h.turn.item ? `&turn=${encodeURIComponent(h.turn.item)}` : ''}`;
 }
 
 const OP_MARK: Record<Op, string> = { edit: '✏️ edit ', write: '✏️ write', read: '📖 read ', fetch: '🌐 fetch', attach: '📎 attach' };

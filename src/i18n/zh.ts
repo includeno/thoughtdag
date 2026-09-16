@@ -945,6 +945,7 @@ export const zh: Record<keyof typeof en, string> = {
   'evaluator.badge': '评审者',
 
   // Toolbar
+  'toolbar.adjustSpacing': '整理节点间距',
   'toolbar.relayout': '一键排版',
   'toolbar.align': '对齐',
   'toolbar.duplicate': '复制',
@@ -1107,6 +1108,9 @@ export const zh: Record<keyof typeof en, string> = {
   'metadata.deleteTypeConfirm': '删除类型“{name}”？节点上的类型标记会一并移除。',
   'metadata.tags': '标签',
   'metadata.multiTags': '可同时选择多个',
+  'metadata.selectOrCreateTag': '搜索或创建标签…',
+  'metadata.createAndSelectTag': '创建并选中“{name}”',
+  'metadata.removeTag': '移除标签“{name}”',
   'metadata.searchTags': '搜索标签…',
   'metadata.noTags': '还没有匹配的标签',
   'metadata.newTag': '新建标签…',

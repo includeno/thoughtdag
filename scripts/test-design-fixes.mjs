@@ -302,14 +302,14 @@ test('D5.03 current-project navigation preserves filters and view preference', a
 });
 
 const desktop = JSON.parse(readFileSync(new URL('../desktop/package.json', import.meta.url)));
-test('D6.01 fork application identity and protocol are isolated', () => {
-  assert.equal(desktop.build.appId, 'io.github.includeno.thoughtdag');
-  assert.equal(desktop.build.productName, 'ThoughtDAG Includeno');
-  assert.deepEqual(desktop.build.protocols[0].schemes, ['thoughtdag-includeno']);
+test('D6.01 application identity and protocol match upstream', () => {
+  assert.equal(desktop.build.appId, 'io.github.chenxiachan.thoughtdag');
+  assert.equal(desktop.build.productName, 'ThoughtDAG');
+  assert.deepEqual(desktop.build.protocols[0].schemes, ['thoughtdag']);
 });
 test('D6.02 updater and download use the package publisher', () => {
-  assert.equal(releases.releaseApi, 'https://api.github.com/repos/includeno/thoughtdag/releases/latest');
-  assert.equal(releases.releaseDownload, 'https://github.com/includeno/thoughtdag/releases/latest');
+  assert.equal(releases.releaseApi, 'https://api.github.com/repos/chenxiachan/thoughtdag/releases/latest');
+  assert.equal(releases.releaseDownload, 'https://github.com/chenxiachan/thoughtdag/releases/latest');
 });
 for (const [label, current, candidate, expected] of [
   ['new patch', '0.4.3', 'v0.4.4', true], ['new minor', '0.4.9', '0.10.0', true],

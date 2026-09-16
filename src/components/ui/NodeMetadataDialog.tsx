@@ -25,7 +25,6 @@ export default function NodeMetadataDialog() {
   const setNodeTag = useStore((state) => state.setNodeTag);
   const setNodeCustomType = useStore((state) => state.setNodeCustomType);
   const [tagSearch, setTagSearch] = useState('');
-  const [newTag, setNewTag] = useState('');
   const [newType, setNewType] = useState('');
   const [editing, setEditing] = useState<EditTarget>(null);
 
@@ -41,11 +40,13 @@ export default function NodeMetadataDialog() {
   if (!nodeIds) return null;
   const mode = selected.length === 1 ? nodeEditMode(selected[0].data) : undefined;
 
+  const tagName = tagSearch.trim().replace(/\s+/g, ' ');
+  const existingTag = taxonomy.tags.find(tag => tag.name.toLocaleLowerCase() === tagName.toLocaleLowerCase());
   const addTag = () => {
-    const id = createTag(newTag);
+    const id = existingTag?.id ?? createTag(tagName);
     if (id) {
       setNodeTag(nodeIds, id, true);
-      setNewTag('');
+      setTagSearch('');
     }
   };
   const addType = () => {
@@ -128,7 +129,19 @@ export default function NodeMetadataDialog() {
               <h3 className="text-xs font-semibold text-ink">{t('metadata.tags')}</h3>
               <span className="text-2xs text-ink-faint">{t('metadata.multiTags')}</span>
             </div>
-            <input value={tagSearch} onChange={(event) => setTagSearch(event.target.value)} placeholder={t('metadata.searchTags')} className={`${inputClass} w-full mb-2`} />
+            <div className="flex flex-wrap gap-1.5 mb-2" data-selected-tags>
+              {taxonomy.tags.filter(tag => selected.some(node => node.data.tagIds?.includes(tag.id))).map(tag => (
+                <button key={tag.id} onClick={() => setNodeTag(nodeIds, tag.id, false)}
+                  aria-label={fmt(t('metadata.removeTag'), { name: tag.name })}
+                  className="flex items-center gap-1 text-xs px-2 py-1 rounded-full border"
+                  style={{ color: tag.color, borderColor: `${tag.color}55`, backgroundColor: `${tag.color}12` }}>
+                  {tag.name}<X size={11} />
+                </button>
+              ))}
+            </div>
+            <input value={tagSearch} onChange={(event) => setTagSearch(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter' && !isImeComposing(event) && tagName) { event.preventDefault(); addTag(); } }}
+              aria-label={t('metadata.selectOrCreateTag')} placeholder={t('metadata.selectOrCreateTag')} className={`${inputClass} w-full mb-2`} />
             <div className="border border-line rounded-xl divide-y divide-line/70 max-h-56 overflow-y-auto">
               {shownTags.length === 0 && <p className="px-3 py-4 text-xs text-ink-faint text-center">{t('metadata.noTags')}</p>}
               {shownTags.map((tag) => {
@@ -136,7 +149,7 @@ export default function NodeMetadataDialog() {
                 const assigned = selected.length > 0 && count === selected.length;
                 return (
                   <div key={tag.id} className="px-3 py-2 flex items-center gap-2">
-                    <button onClick={() => setNodeTag(nodeIds, tag.id, !assigned)} className="flex-1 min-w-0 flex items-center gap-2 text-left">
+                    <button onClick={() => setNodeTag(nodeIds, tag.id, !assigned)} aria-pressed={assigned} className="flex-1 min-w-0 flex items-center gap-2 text-left">
                       <span className={`w-4 h-4 rounded border flex items-center justify-center ${assigned ? 'bg-accent border-accent text-white' : count > 0 ? 'border-accent bg-accent/15' : 'border-line'}`}>
                         {assigned && <Check size={10} strokeWidth={2.5} />}
                       </span>
@@ -161,10 +174,11 @@ export default function NodeMetadataDialog() {
                 );
               })}
             </div>
-            <div className="flex gap-2 mt-2">
-              <input value={newTag} onChange={(event) => setNewTag(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !isImeComposing(event)) addTag(); }} placeholder={t('metadata.newTag')} className={inputClass} />
-              <button onClick={addTag} disabled={!newTag.trim()} className="text-xs px-3 rounded-lg bg-accent text-white disabled:opacity-30 flex items-center gap-1"><Plus size={12} /> {t('common.add')}</button>
-            </div>
+            {tagName && !existingTag && (
+              <button onClick={addTag} className="w-full text-left text-xs px-3 py-2 mt-1 rounded-lg text-accent hover:bg-accent/10 flex items-center gap-2">
+                <Plus size={12} /> {fmt(t('metadata.createAndSelectTag'), { name: tagName })}
+              </button>
+            )}
           </section>
         </div>
       </section>

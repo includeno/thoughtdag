@@ -32,6 +32,7 @@ const AUTO_PAUSE_KEY = 'thoughtdag.autoRefreshPaused';
 const HIDE_ANNOTATIONS_KEY = 'thoughtdag.hideAnnotations';
 
 interface UiState {
+  measuringLayout: boolean;
   toasts: ToastItem[];
   confirmRequest: ConfirmRequest | null;
   tutorialOpen: boolean;
@@ -188,6 +189,7 @@ interface UiState {
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
+  measuringLayout: false,
   toasts: [],
   confirmRequest: null,
   tutorialOpen: false,

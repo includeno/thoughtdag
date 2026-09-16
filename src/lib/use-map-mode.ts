@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { useUiStore } from './ui-store';
 import { useStore as useRfStore } from '@xyflow/react';
 
 /**
@@ -15,7 +16,8 @@ export type ZoomTier = 'work' | 'map' | 'glyph';
 
 export function useZoomTier(): ZoomTier {
   const ref = useRef<ZoomTier>('work');
-  return useRfStore((s) => {
+  const measuringLayout = useUiStore((s) => s.measuringLayout);
+  const tier = useRfStore((s) => {
     const z = s.transform[2];
     const cur = ref.current;
     if (cur === 'work') {
@@ -29,6 +31,7 @@ export function useZoomTier(): ZoomTier {
     }
     return ref.current;
   });
+  return measuringLayout ? 'work' : tier;
 }
 
 /** Legacy boolean view: true whenever cards are folded (map OR glyph). */

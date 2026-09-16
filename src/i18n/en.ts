@@ -946,6 +946,7 @@ export const en = {
   'evaluator.badge': 'Evaluator',
 
   // Toolbar
+  'toolbar.adjustSpacing': 'Adjust node spacing',
   'toolbar.relayout': 'Tidy layout',
   'toolbar.align': 'Align',
   'toolbar.duplicate': 'Duplicate',
@@ -1108,6 +1109,9 @@ export const en = {
   'metadata.deleteTypeConfirm': 'Delete type “{name}”? It will be removed from every node.',
   'metadata.tags': 'Tags',
   'metadata.multiTags': 'Choose any number',
+  'metadata.selectOrCreateTag': 'Search or create tags…',
+  'metadata.createAndSelectTag': 'Create and select “{name}”',
+  'metadata.removeTag': 'Remove tag “{name}”',
   'metadata.searchTags': 'Search tags…',
   'metadata.noTags': 'No matching tags yet',
   'metadata.newTag': 'New tag…',

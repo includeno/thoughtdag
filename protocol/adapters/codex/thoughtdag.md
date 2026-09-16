@@ -16,7 +16,7 @@ done
 
 If the argument is `list`, list the 5 most recent matching files (name, size, mtime) for the user to pick; if it is a session-id prefix, pick the matching file. The sessionId = the trailing UUID in the filename (`rollout-<timestamp>-<uuid>.jsonl`).
 
-2. **Main road (desktop app)**: run `open "thoughtdag-includeno://open?session=<sessionId>"` (macOS; `xdg-open` on Linux, `start` on Windows). Exit code 0 = success — tell the user: the session is now open in the ThoughtDAG desktop app; the canvas routes itself (an existing canvas for this session continues at its break point, otherwise a fresh canvas is minted), and from now on the canvas follows this session automatically. **Never print or summarize the session content** — that is ThoughtDAG's job. Done.
+2. **Main road (desktop app)**: run `open "thoughtdag://open?session=<sessionId>"` (macOS; `xdg-open` on Linux, `start` on Windows). Exit code 0 = success — tell the user: the session is now open in the ThoughtDAG desktop app; the canvas routes itself (an existing canvas for this session continues at its break point, otherwise a fresh canvas is minted), and from now on the canvas follows this session automatically. **Never print or summarize the session content** — that is ThoughtDAG's job. Done.
 
 3. **Fallback (open failed = desktop app missing or too old)**: use the local bridge. ① **Copy** the session JSONL to `~/Desktop/thoughtdag-session-$(date +%Y%m%d-%H%M).jsonl` (never modify the source). ② Clear leftovers with `lsof -ti :38017 | xargs kill 2>/dev/null`, then run in the background (`nohup … >/dev/null 2>&1 &`) with the snapshot path as `TD_SNAP`:
 

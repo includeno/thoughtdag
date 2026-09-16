@@ -26,6 +26,13 @@ execFileSync(join(ROOT, 'node_modules/.bin/esbuild'), [
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
 const { autoLayout, nodeHeight } = await import(pathToFileURL(bundle).href);
 
+const routeBundle = join(tmp, 'edge-path.mjs');
+execFileSync(join(ROOT, 'node_modules/.bin/esbuild'), [
+  join(ROOT, 'src/lib/edge-path.ts'), '--bundle', '--format=esm', '--platform=node',
+  `--outfile=${routeBundle}`, '--define:import.meta.env.VITE_API_BASE=""', '--define:import.meta.env.DEV=false',
+], { stdio: ['ignore', 'ignore', 'pipe'] });
+const { routeEdge } = await import(pathToFileURL(routeBundle).href);
+
 let failures = 0;
 function test(name, fn) {
   try { fn(); console.log(`  ok   ${name}`); }
@@ -202,6 +209,52 @@ test('overlapping frames can share a member and both still follow it', () => {
     assert(f.position.x < root.position.x && f.position.y < root.position.y, `${id} lost shared member`);
     assert(f.position.x + f.width > root.position.x + 520, `${id} no longer wraps shared member`);
   }
+});
+
+test('layout reserves the same expanded space for collapsed and open cards', () => {
+  const nodes = ['parent', 'child', 'branch'].map((id, i) => th(id, { isCollapsed: false, response: '内容'.repeat(100 + i * 300) }));
+  const edges = [ed('parent', 'child'), ed('parent', 'branch')];
+  const open = autoLayout(nodes, edges).map(n => n.position);
+  const folded = nodes.map(n => ({ ...n, data: { ...n.data, isCollapsed: true } }));
+  assert(JSON.stringify(autoLayout(folded, edges).map(n => n.position)) === JSON.stringify(open), 'folded nodes must retain expanded clearance');
+});
+
+test('wide downward branches stay inside their vertical gap without curling', () => {
+  for (const dx of [-1200, 0, 1200]) {
+    const route = routeEdge(0, 500, 'bottom', dx, 572, 'top', 'source', 'target', []);
+    const points = route.path.match(/-?\d+(?:\.\d+)?/g).map(Number);
+    assert(points[3] >= 500 && points[3] <= points[5] && points[5] <= 572, 'Bezier controls must stay ordered between the handles');
+  }
+});
+
+test('nested sibling branches reserve separate subtree columns', () => {
+  for (const anchored of [false, true]) {
+    const nodes = ['root', 'consumer', 'push', 'backlog', 'reliability', 'loss'].map(id => th(id));
+    const edges = [ed('root', 'consumer'), ed('root', 'reliability'), ed('consumer', 'push'), ed('consumer', 'backlog'), ed('reliability', 'loss')];
+    if (anchored) { nodes.unshift(file('material', 300)); edges.unshift(ed('material', 'root')); }
+    const laid = autoLayout(nodes, edges);
+    assert(xOf(laid, 'push') === xOf(laid, 'consumer'), 'first followup stays under its own parent');
+    assert(xOf(laid, 'loss') === xOf(laid, 'reliability'), 'other chain stays vertical');
+    assert(xOf(laid, 'backlog') > xOf(laid, 'consumer'), 'second followup gets a branch column');
+    assert(xOf(laid, 'reliability') > xOf(laid, 'backlog'), 'unrelated parent must not occupy descendant branch column');
+    assert(JSON.stringify(autoLayout(laid, edges)) === JSON.stringify(laid), 'subtree layout must be idempotent');
+  }
+});
+
+test('spacing uses measured card sizes and repeated layout does not drift', () => {
+  const nodes = ['root', 'child', 'sibling', 'followup'].map((id, i) =>
+    placed(th(id, { isCollapsed: false }), i * 17, i * 11, 800, 950 + i * 40));
+  const edges = [ed('root', 'child'), ed('root', 'sibling'), ed('child', 'followup')];
+  const once = autoLayout(nodes, edges);
+  assert(xOf(once, 'root') === xOf(once, 'child') && xOf(once, 'child') === xOf(once, 'followup'), 'continuation must stay vertical');
+  assert(xOf(once, 'sibling') - xOf(once, 'child') >= 848, 'wide cards need horizontal clearance');
+  for (const edge of edges) {
+    const parent = nodeOf(once, edge.source), child = nodeOf(once, edge.target);
+    assert(child.position.y >= parent.position.y + nodeHeight(parent) + 72, 'child must clear measured parent height');
+  }
+  let repeated = once;
+  for (let i = 0; i < 5; i++) repeated = autoLayout(repeated, edges);
+  assert(JSON.stringify(repeated) === JSON.stringify(once), 'repeated clicks must leave coordinates unchanged');
 });
 
 test('the benchmark canvases keep the arrow order', () => {

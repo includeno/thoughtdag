@@ -366,6 +366,21 @@ try {
   invalidMode.nodes[0].data.editMode = 'wrong';
   assert.throws(() => parseCliProjectImport(invalidMode), /editMode/);
 
+  const topic = await executeCliCommand('node.create', { question: 'MQ topic', editMode: 'manual-detail' });
+  const concept = await executeCliCommand('node.create', { question: 'Producer', parentId: topic.id, editMode: 'manual-detail' });
+  const followup = await executeCliCommand('node.create', { question: 'Send timed out?', parentId: topic.id, editMode: 'manual-detail' });
+  const followupEdge = useStore.getState().edges.find(e => e.source === topic.id && e.target === followup.id);
+  await executeCliCommand('edge.update', { edgeId: followupEdge.id, sourceId: concept.id });
+  assert.ok(useStore.getState().edges.some(e => e.source === concept.id && e.target === followup.id));
+  assert.ok(!useStore.getState().edges.some(e => e.source === topic.id && e.target === followup.id));
+  await executeCliCommand('history.undo', {});
+  assert.ok(useStore.getState().edges.some(e => e.source === topic.id && e.target === followup.id));
+  await executeCliCommand('history.redo', {});
+  assert.ok(useStore.getState().edges.some(e => e.source === concept.id && e.target === followup.id));
+  const moved = parseCliProjectImport(JSON.parse(JSON.stringify(await executeCliCommand('canvas.export', {}))));
+  assert.ok(moved.edges.some(e => e.source === concept.id && e.target === followup.id));
+  console.log('PASS CLI topic/concept/follow-up reparenting, undo/redo and export');
+
   console.log('CLI knowledge, three edit modes and v2 transfer tests passed');
 } finally {
   await vite.close();

@@ -8,12 +8,6 @@ const net = require('net');
 const os = require('os');
 const fsp = require('fs/promises');
 const { zstdDecompressSync } = require('node:zlib');
-const identity = require('./package.json').build;
-const deepLinkScheme = identity.protocols[0].schemes[0];
-// Separate the fork's profile, protocol and installer from upstream.
-app.setName(identity.productName);
-app.setPath('userData', path.join(app.getPath('appData'), identity.productName));
-app.setPath('sessionData', app.getPath('userData'));
 
 // Development: the repo root (live dist + server.mjs + root node_modules).
 // Packaged: a self-contained payload under Resources — same three files,
@@ -86,7 +80,7 @@ async function boot() {
   win = new BrowserWindow({
     width: 1500,
     height: 950,
-    title: identity.productName,
+    title: 'ThoughtDAG',
     backgroundColor: '#FAF9F7',
     webPreferences: { preload: path.join(__dirname, 'preload.js') },
   });
@@ -887,13 +881,13 @@ if (!lock) {
   // loop is testable before release. macOS delivers via open-url;
   // win/linux via argv (cold start) or second-instance (running).
   if (process.defaultApp && process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient(deepLinkScheme, process.execPath, [path.resolve(process.argv[1])]);
+    app.setAsDefaultProtocolClient('thoughtdag', process.execPath, [path.resolve(process.argv[1])]);
   } else {
-    app.setAsDefaultProtocolClient(deepLinkScheme);
+    app.setAsDefaultProtocolClient('thoughtdag');
   }
-  let pendingDeepLink = process.argv.find((a) => typeof a === 'string' && a.startsWith(`${deepLinkScheme}://`)) ?? null;
+  let pendingDeepLink = process.argv.find((a) => typeof a === 'string' && a.startsWith('thoughtdag://')) ?? null;
   const deliverDeepLink = (url) => {
-    if (typeof url !== 'string' || !url.startsWith(`${deepLinkScheme}://`)) return;
+    if (typeof url !== 'string' || !url.startsWith('thoughtdag://')) return;
     if (win && !win.isDestroyed()) {
       win.webContents.send('sessions:deeplink', url);
       if (win.isMinimized()) win.restore();
@@ -907,7 +901,7 @@ if (!lock) {
   ipcMain.handle('sessions:pending-deeplink', () => { const l = pendingDeepLink; pendingDeepLink = null; return l; });
   app.on('second-instance', (_e, argv) => {
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
-    const link = argv.find((a) => typeof a === 'string' && a.startsWith(`${deepLinkScheme}://`));
+    const link = argv.find((a) => typeof a === 'string' && a.startsWith('thoughtdag://'));
     if (link) deliverDeepLink(link);
   });
   app.whenReady().then(() => {

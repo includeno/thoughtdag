@@ -1,4 +1,4 @@
-import type { OrganizationRelation, ThoughtData, ThoughtEdge, ThoughtNode } from '../types';
+import type { OrganizationRelation, TagDefinition, ThoughtData, ThoughtEdge, ThoughtNode } from '../types';
 
 /** Pure knowledge-graph projections. Nothing in this module mutates graph data
  *  or changes which content reaches the model. ThoughtEdge stays the executable
@@ -6,6 +6,7 @@ import type { OrganizationRelation, ThoughtData, ThoughtEdge, ThoughtNode } from
 
 export interface KnowledgeGraphInput {
   nodes: readonly ThoughtNode[];
+  tags?: readonly TagDefinition[];
   edges?: readonly ThoughtEdge[];
   organizationRelations?: readonly OrganizationRelation[];
 }
@@ -34,6 +35,8 @@ export interface RelationScopeFilter {
 export interface KnowledgeQuery {
   /** Case-insensitive exact substring. Optional: metadata-only filtering is supported. */
   text?: string;
+  /** Case-insensitive tag-name substring; independent of body text. */
+  tagText?: string;
   /** OR within this dimension; dimensions are combined with AND. `qa` means no stepKind. */
   systemKinds?: readonly SystemNodeKind[];
   /** OR within this dimension. */
@@ -580,6 +583,7 @@ function searchableValues(node: ThoughtNode): [SearchField, string][] {
 export function knowledgeQueryIsActive(query: KnowledgeQuery = {}): boolean {
   return !!(
     query.text?.trim()
+    || query.tagText?.trim()
     || query.systemKinds?.length
     || query.customTypeIds?.length
     || query.tagIds?.length
@@ -611,6 +615,8 @@ export function queryKnowledgeNodes(
   query: KnowledgeQuery = {},
 ): KnowledgeQueryResult {
   const text = query.text?.trim().toLowerCase() ?? '';
+  const tagText = query.tagText?.trim().toLowerCase() ?? '';
+  const matchingTags = new Set((graph.tags ?? []).filter(tag => tag.name.toLowerCase().includes(tagText)).map(tag => tag.id));
   const kinds = new Set(query.systemKinds ?? []);
   const customTypes = new Set(query.customTypeIds ?? []);
   const tags = new Set(query.tagIds ?? []);
@@ -623,6 +629,7 @@ export function queryKnowledgeNodes(
   const hits: (KnowledgeQueryHit & { index: number })[] = [];
   for (const { node, index } of indexed) {
     if (scopeIds && !scopeIds.has(node.id)) continue;
+    if (tagText && !node.data.tagIds?.some(id => matchingTags.has(id))) continue;
     if (archived === 'active' && node.data.archived) continue;
     if (archived === 'archived' && !node.data.archived) continue;
     if (kinds.size > 0 && !kinds.has(node.data.stepKind ?? 'qa')) continue;

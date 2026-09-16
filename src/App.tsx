@@ -1,9 +1,11 @@
+import { flushSync } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
   Controls,
+  ControlButton,
   MiniMap,
   SelectionMode,
   type OnNodesChange,
@@ -211,6 +213,7 @@ export default function App() {
 }
 
 function Canvas() {
+  const tags = useStore((state) => state.taxonomy.tags);
   const { nodes, edges, organizationRelations, setNodes, setEdges, addQuestion, undo, redo, addCrossLink, setSelectedNodeId, setSelectedNodeIds, history, historyIndex, relayout } = useStore(useShallow((state) => ({ nodes: state.nodes, edges: state.edges, organizationRelations: state.organizationRelations, setNodes: state.setNodes, setEdges: state.setEdges, addQuestion: state.addQuestion, undo: state.undo, redo: state.redo, addCrossLink: state.addCrossLink, setSelectedNodeId: state.setSelectedNodeId, setSelectedNodeIds: state.setSelectedNodeIds, history: state.history, historyIndex: state.historyIndex, relayout: state.relayout })));
   const t = useT();
   const setTutorialOpen = useUiStore((s) => s.setTutorialOpen);
@@ -241,6 +244,24 @@ function Canvas() {
   const materialCount = useStore((s) => s.nodes.reduce((sum, n) =>
     sum + (n.data.attachments?.length ?? 0) + (['note', 'link'].includes(n.data.stepKind ?? '') ? 1 : 0), 0));
   const rfInstance = useRef<ReactFlowInstance<ThoughtNodeType, ThoughtEdge> | null>(null);
+  const measuringLayout = useUiStore((state) => state.measuringLayout);
+  const arrangeMeasuredNodes = () => {
+    // Measure full cards, including offscreen nodes, before semantic zoom
+    // replaces them with plaques. offset sizes are independent of zoom.
+    flushSync(() => useUiStore.setState({ measuringLayout: true }));
+    try {
+      const sizes = new Map(Array.from(document.querySelectorAll<HTMLElement>('.react-flow__node[data-id]'))
+        .filter((element) => element.offsetWidth > 0 && element.offsetHeight > 0)
+        .map((element) => [element.dataset.id!, { width: element.offsetWidth, height: element.offsetHeight }]));
+      setNodes(useStore.getState().nodes.map((node) => {
+        const measured = sizes.get(node.id);
+        return measured ? { ...node, measured } : node;
+      }));
+      relayout();
+    } finally {
+      useUiStore.setState({ measuringLayout: false });
+    }
+  };
   // Arrival focus, runtime lane: a harvest appends to the LIVE canvas (no
   // remount, so onInit never fires) — consume the one-shot here instead.
   const arrivalFocus = useUiStore((s) => s.arrivalFocusNodeId);
@@ -937,7 +958,7 @@ function Canvas() {
   const knowledgeProjection = useMemo(() => {
     try {
       return projectKnowledgeQuery(
-        { nodes, edges, organizationRelations },
+        { nodes, edges, organizationRelations, tags },
         effectiveKnowledgeQuery,
         { activeNodeId, localDepth },
       );
@@ -947,7 +968,7 @@ function Canvas() {
         activeOutsideFilter: false, neighborhood: null,
       };
     }
-  }, [nodes, edges, organizationRelations, effectiveKnowledgeQuery, activeNodeId, localDepth]);
+  }, [nodes, edges, organizationRelations, tags, effectiveKnowledgeQuery, activeNodeId, localDepth]);
   const matchedKnowledgeNodeIds = useMemo(
     () => new Set(knowledgeProjection.matchedNodeIds),
     [knowledgeProjection.matchedNodeIds],
@@ -1279,7 +1300,7 @@ function Canvas() {
         // Cull off-viewport nodes: a content-heavy canvas keeps dozens of
         // full markdown/KaTeX card DOMs mounted otherwise, and zoom/pan
         // transforms all of them every frame.
-        onlyRenderVisibleElements
+        onlyRenderVisibleElements={!measuringLayout}
         // 0.04, not 0.1: a canvas with a condensed copy beside the original
         // doubles in width — the overview must still fit in one screen for
         // whole-branch selection and cleanup.
@@ -1318,7 +1339,16 @@ function Canvas() {
         <ZoomTierTag />
         <ThoughtMapPill panelShiftWidth={panelOpen ? livePanelWidth : 0} />
         <TimelineBar />
-        <Controls position="bottom-left" />
+        <Controls position="bottom-left">
+          {!isViewerMode && <ControlButton
+            onClick={arrangeMeasuredNodes}
+            title={t('toolbar.adjustSpacing')}
+            aria-label={t('toolbar.adjustSpacing')}
+            disabled={nodes.length === 0}
+          >
+            <LayoutGrid size={16} strokeWidth={1.75} />
+          </ControlButton>}
+        </Controls>
         {nodes.length > 0 && <MiniMap
           nodeColor={(node) => {
             const data = node.data as Record<string, unknown>;
@@ -1965,7 +1995,7 @@ function Canvas() {
                       confirmLabel: t('toolbar.relayout'),
                     }).then((ok) => {
                       if (!ok) return;
-                      relayout();
+                      arrangeMeasuredNodes();
                       setTimeout(() => rfInstance.current?.fitView({ duration: 400, padding: 0.15 }), 50);
                     });
                   }}

@@ -3,7 +3,7 @@ import type { StateCreator } from 'zustand';
 import type { ThoughtNode, ThoughtEdge } from '../../types';
 import { generateId, countTokens } from '../../utils';
 import { COLORS } from '../../lib/constants';
-import { healLegacyNoteEdges, autoLayout, estimateNodeHeight, nodeHeight } from '../../lib/layout';
+import { healLegacyNoteEdges, autoLayout, nodeHeight } from '../../lib/layout';
 import { getDescendantIds, walkUpAncestors } from '../../lib/graph';
 import { referenceBlockContent, upstreamFingerprint, buildContext } from '../context-builder';
 import { pruneHighlights } from '../../lib/highlight-match';
@@ -88,26 +88,10 @@ export const createNodeSlice: StateCreator<StoreState, [], [], NodeSlice> = (set
     const node = get().nodes.find((n) => n.id === nodeId);
     if (!node) return;
 
-    // Current height is measured; the post-toggle height must be estimated
-    const oldHeight = nodeHeight(node);
-    const newHeight = estimateNodeHeight({ ...node, data: { ...node.data, isCollapsed: !node.data.isCollapsed } });
-    const delta = newHeight - oldHeight;
-
-    // Find all descendants of this node
-    const descendants = getDescendantIds(nodeId, get().edges);
-    const descSet = new Set(descendants);
-
     set((state) => ({
-      nodes: state.nodes.map((n) => {
-        if (n.id === nodeId) {
-          return { ...n, data: { ...n.data, isCollapsed: !n.data.isCollapsed } };
-        }
-        // Shift descendants vertically by delta
-        if (descSet.has(n.id)) {
-          return { ...n, position: { ...n.position, y: n.position.y + delta } };
-        }
-        return n;
-      }),
+      nodes: state.nodes.map((n) => n.id === nodeId
+        ? { ...n, data: { ...n.data, isCollapsed: !n.data.isCollapsed } }
+        : n),
     }));
   },
 

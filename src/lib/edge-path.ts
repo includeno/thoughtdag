@@ -75,6 +75,11 @@ export function routeEdge(
   const p3: Pt = { x: targetX, y: targetY };
   const dist = Math.hypot(targetX - sourceX, targetY - sourceY);
   const offset = Math.min(Math.max(dist * 0.45, 40), 260);
+  // A wide branch with a short vertical gap must not curl above the
+  // source or below the target merely because its horizontal span is long.
+  const verticalOffset = sourcePosition === 'bottom' && targetPosition === 'top' && targetY > sourceY
+    ? Math.min(offset, (targetY - sourceY) / 2)
+    : offset;
 
   // Obstacles: every card except the two endpoints, inflated by MARGIN
   const obstacles = nodes
@@ -94,8 +99,8 @@ export function routeEdge(
 
   for (const bend of BENDS) {
     const sway = bend * dist;
-    const c1 = controlFor(sourcePosition, sourceX, sourceY, offset, offset);
-    const c2 = controlFor(targetPosition, targetX, targetY, offset, offset);
+    const c1 = controlFor(sourcePosition, sourceX, sourceY, offset, verticalOffset);
+    const c2 = controlFor(targetPosition, targetX, targetY, offset, verticalOffset);
     c1.x += nx * sway; c1.y += ny * sway;
     c2.x += nx * sway; c2.y += ny * sway;
 

@@ -148,7 +148,7 @@ export default function SearchBar({
             ref={inputRef}
             type="text"
             value={knowledgeQuery.text ?? ''}
-            onChange={(event) => updateQuery({ text: event.target.value })}
+            onChange={(event) => updateQuery({ text: event.target.value, tagText: undefined })}
             onKeyDown={(event) => {
               if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
               if (event.key === 'ArrowDown') { event.preventDefault(); setCursor((current) => Math.min(current + 1, Math.max(0, Math.min(limit, matches.length) - 1))); }
@@ -156,6 +156,7 @@ export default function SearchBar({
               if (event.key === 'Enter' && !isImeComposing(event) && matches[boundedCursor]) { event.preventDefault(); locate(matches[boundedCursor]); }
             }}
             placeholder={t('search.placeholder')}
+            aria-label={t('search.placeholder')}
             className="flex-1 bg-transparent text-sm text-ink placeholder-ink-faint focus:outline-none"
             data-search-input
           />
@@ -170,9 +171,9 @@ export default function SearchBar({
           <button onClick={onClose} className="text-ink-faint hover:text-ink transition-colors shrink-0"><X size={14} strokeWidth={1.75} /></button>
         </div>
 
-        {filtersOpen && (
+        {(filtersOpen || taxonomy.tags.length > 0) && (
           <div className="border-t border-line/60 bg-wash/40 px-4 py-3" data-search-filters>
-            <div className="grid grid-cols-3 gap-3">
+            {filtersOpen && <div className="grid grid-cols-3 gap-3">
               <label>
                 <span className={labelClass}>{t('search.systemKind')}</span>
                 <select value={selectedKind} onChange={(event) => updateQuery({ systemKinds: event.target.value ? [event.target.value as SystemNodeKind] : [] })} className={selectClass}>
@@ -219,7 +220,7 @@ export default function SearchBar({
                   <input type="date" value={knowledgeQuery.createdAt?.to ?? ''} onChange={(event) => updateQuery({ createdAt: { ...knowledgeQuery.createdAt, to: event.target.value || undefined } })} className={selectClass} />
                 </label>
               </div>
-            </div>
+            </div>}
             {taxonomy.tags.length > 0 && (
               <div className="mt-3">
                 <span className={labelClass}>{t('search.tags')}</span>
@@ -229,6 +230,7 @@ export default function SearchBar({
                     return (
                       <button
                         key={tag.id}
+                        aria-pressed={selected}
                         onClick={() => {
                           const ids = new Set(knowledgeQuery.tagIds ?? []);
                           if (selected) ids.delete(tag.id); else ids.add(tag.id);

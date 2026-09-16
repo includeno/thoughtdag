@@ -64,7 +64,7 @@ t('the footprint is the edit run_code dispatched, shown as the runner\'s own cha
   assert.match(why, /Q: 把 backoff\.ts 的重试改成退避/);
   assert.ok(!why.includes('runtime-context'), 'the injected context is not a question');
   assert.ok(!why.includes('The user wants backoff'), 'reasoning is not the answer');
-  assert.match(why, /thoughtdag-includeno:\/\/open\?session=session-dsh-1&turn=m-u1/);
+  assert.match(why, /thoughtdag:\/\/open\?session=session-dsh-1&turn=m-u1/);
 });
 
 t('a read dispatched from run_code is a read, with its line window; a file nobody changed still answers', () => {

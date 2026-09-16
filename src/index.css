@@ -619,7 +619,7 @@ body.tdag-connecting, body.tdag-connecting * {
    rest of the map dims — search sharpens the map, never replaces it. ── */
 [data-searching] .react-flow__node { opacity: 0.16; transition: opacity 0.2s ease; }
 [data-searching] .react-flow__node.search-hit { opacity: 1; }
-[data-searching] .react-flow__node.filter-anchor { opacity: 1; }
+[data-searching] .react-flow__node.filter-anchor { opacity: 0.16; }
 [data-searching] .react-flow__edges { opacity: 0.18; transition: opacity 0.2s ease; }
 
 /* "Continue last thread" hover beacon: a loud steady halo (same language as
@@ -644,7 +644,7 @@ body.tdag-connecting, body.tdag-connecting * {
 .react-flow__node.focus-down .thought-node,
 .react-flow__node.focus-down .content-card { border-style: dashed; }
 /* the searchlight owns the stage while active */
-[data-searching] .react-flow__node.focus-dim { opacity: 0.16; }
+[data-searching] .react-flow__node.focus-dim:not(.search-hit) { opacity: 0.16; }
 
 /* lit edges keep their SCREEN width when zoomed out: divide by the zoom
    (clamped) so the feed line never thins into invisibility on the map */

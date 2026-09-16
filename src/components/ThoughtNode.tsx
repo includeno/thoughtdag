@@ -47,6 +47,8 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
   const selectedNodeId = useStore((s) => s.selectedNodeId);
   const addAttachment = useStore((s) => s.addAttachment);
   const rerunNode = useStore((s) => s.rerunNode);
+  const measuringLayout = useUiStore((state) => state.measuringLayout);
+  const isCollapsed = data.isCollapsed && !measuringLayout;
   const t = useT();
   const [isDropTarget, setIsDropTarget] = useState(false);
   const [fanoutOpen, setFanoutOpen] = useState(false);
@@ -528,7 +530,6 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
           )}
           {compBar}
           {!data.stepKind && !isViewerMode && <EditModeSelect value={data.editMode ?? 'ai'} disabled={data.isLoading} onChange={(mode) => useStore.getState().setNodeEditMode(id, mode)} />}
-          <NodeTaxonomyBadges tagIds={data.tagIds} customTypeId={data.customTypeId} />
           {data.condensedFrom && data.condensedFrom.length > 0 && (
             <button
               onClick={(e) => {
@@ -619,7 +620,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
         </div>
       </div>
 
-      {!data.isCollapsed && (
+      {!isCollapsed && (
         <div className="px-5 py-4">
           {/* The passage this branch explores: without it the user loses
               the thread that spawned the node. Page-anchored ones carry a
@@ -994,7 +995,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
       )}
 
       {/* Collapsed view — question + summary */}
-      {data.isCollapsed && (
+      {isCollapsed && (
         <div className="px-5 py-3">
           <div className="text-sm text-ink font-semibold truncate flex items-center gap-1.5">
             {data.question.slice(0, 80)}{data.question.length > 80 ? '…' : ''}
@@ -1030,6 +1031,7 @@ export default function ThoughtNode({ id, data }: NodeProps<ThoughtNodeType>) {
         </div>
       )}
 
+      <NodeTaxonomyBadges tagIds={data.tagIds} customTypeId={data.customTypeId} footer />
       </>
       )}
 

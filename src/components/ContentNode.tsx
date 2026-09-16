@@ -165,7 +165,6 @@ export default function ContentNode({ id, data, selected }: NodeProps<ThoughtNod
             ? <span className="text-2xs text-ink-muted truncate">{linkDomain}</span>
             : <span className="text-2xs text-ink-faint font-mono">{kind === 'note' ? `${data.tokenCount} tok` : `${attachments.length}`}</span>}
           {kind === 'note' && !isViewerMode && <EditModeSelect value="manual" onChange={(mode) => { if (editing) commit(); useStore.getState().setNodeEditMode(id, mode); }} />}
-          <NodeTaxonomyBadges tagIds={data.tagIds} customTypeId={data.customTypeId} compact />
           {clipSourceName && (
             <button
               onClick={openClipSource}
@@ -417,6 +416,8 @@ export default function ContentNode({ id, data, selected }: NodeProps<ThoughtNod
           <MoveDiagonal2 size={13} strokeWidth={1.75} className="text-ink-faint absolute bottom-0.5 right-0.5" />
         </NodeResizeControl>
       )}
+
+      <NodeTaxonomyBadges tagIds={data.tagIds} customTypeId={data.customTypeId} footer />
 
       <Handle type="source" position={Position.Bottom} id="continue" className={`!bg-ink-faint !border-2 !border-white tdag-handle ${zoomedOut ? '!w-6 !h-6 tdag-handle-lg' : '!w-3.5 !h-3.5'}`} />
       {/* Invisible side anchor so material references can exit sideways */}

@@ -29,7 +29,7 @@ The CLI resolves the session file in this order:
 2. `THOUGHTDAG_CLI_SESSION`
 3. `<current-working-directory>/.thoughtdag-cli-session.json`
 
-Installed desktop defaults:
+Desktop defaults (other builds or custom profiles may differ):
 
 | Platform | Default session path |
 | --- | --- |
